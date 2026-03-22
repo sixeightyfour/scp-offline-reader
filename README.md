@@ -1,16 +1,16 @@
-SCP Offline Archives
+# SCP Offline Archives
 By danjon56, AND YOU!
 
-A collection of every mainlist article (pulled from the SCP Data API), available for offline viewing, completely free.
+A collection of every mainlist article (pulled from the SCP Data API), available for offline viewing, **completely free**.
 
-Features:
+## Features:
 
 - Locally cached images
 - Screen Reader
 - Filter by Series, Author, Tag, or SCP Number
 - HD Download Available on Individual Page Basis (Must be Connected to the Internet)
 
-Coming Soon:
+## Coming Soon:
 
 - More Themes
 - Bookmarks
