@@ -1,12 +1,3 @@
-const fs = require('fs');
-const path = require('path');
-const { pathToFileURL } = require('url');
-const http = require('http');
-const https = require('https');
-const crypto = require('crypto');
-const sharp = require('sharp');
-const { ipcRenderer } = require('electron');
-
 const sidebarList = document.getElementById('scpList');
 const searchInput = document.getElementById('searchInput');
 const groupSelect = document.getElementById('groupSelect');
@@ -33,7 +24,7 @@ let currentGroup = 'all';
 
 const entryLookup = new Map();
 
-const APP_PATHS = ipcRenderer.sendSync('app:get-paths');
+const APP_PATHS = window.scpApp.paths;
 
 console.log('APP_PATHS', APP_PATHS);
 
@@ -46,8 +37,8 @@ const USER_MANIFEST_PATH = APP_PATHS.userManifestPath;
 const BUNDLED_CACHE_DIR = APP_PATHS.bundledCacheDir;
 const BUNDLED_MANIFEST_PATH = APP_PATHS.bundledManifestPath;
 
-ensureDir(USER_DATA_DIR);
-ensureDir(USER_CACHE_DIR);
+//ensureDir(USER_DATA_DIR);
+//ensureDir(USER_CACHE_DIR);
 
 function ensureDir(dir) {
   if (!fs.existsSync(dir)) {
@@ -321,7 +312,7 @@ function buildImageRecord(url, item, mode, extOverride = '') {
   const absDir = path.join(USER_CACHE_DIR, pageSlug);
   const absPath = path.join(USER_DATA_DIR, relPath);
 
-  ensureDir(absDir);
+  //ensureDir(absDir);
 
   return {
     normalized,
@@ -564,58 +555,43 @@ function stopSpeech() {
   pauseBtn.textContent = 'Pause';
 }
 
-function loadAllJsonFiles() {
-  const appDir = CONTENT_DIR;
-  console.log('Loading content from:', CONTENT_DIR);
-  const files = fs.readdirSync(appDir)
-    .filter(name => /^content_.*\.json$/i.test(name))
-    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-	console.log('Content files found:', files);
+async function loadAllJsonFiles() {
+  const loadedFiles = await window.scpApp.loadContent();
 
-  if (!files.length) {
+  if (!Array.isArray(loadedFiles) || !loadedFiles.length) {
     throw new Error('No content_*.json files found.');
   }
 
   const merged = [];
 
-  for (const file of files) {
-    const fullPath = path.join(appDir, file);
+  for (const file of loadedFiles) {
+    const group = file.file.replace(/\.json$/i, '');
+    const groupLabel = prettifyGroupName(file.file);
+    const parsed = file.data;
 
-    try {
-      const raw = fs.readFileSync(fullPath, 'utf8');
-      const parsed = JSON.parse(raw);
+    for (const [key, value] of Object.entries(parsed)) {
+      if (!value || typeof value !== 'object') continue;
 
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-        console.warn(`Skipping ${file}: JSON root is not an object.`);
-        continue;
-      }
-
-      const group = file.replace(/\.json$/i, '');
-      const groupLabel = prettifyGroupName(file);
-
-      for (const [key, value] of Object.entries(parsed)) {
-        if (!value || typeof value !== 'object') continue;
-
-        merged.push({
-          key: `${group}::${key}`,
-          originalKey: key,
-          title: value.title || key,
-          creator: value.creator || 'Unknown',
-          tags: Array.isArray(value.tags) ? value.tags : [],
-          images: Array.isArray(value.images) ? value.images : [],
-          url: normalizeUrl(value.url || ''),
-          link: value.link || '',
-          raw_content: value.raw_content || '',
-          raw_source: value.raw_source || '',
-          rating: value.rating ?? 'N/A',
-          group,
-          groupLabel,
-          sourceFile: file,
-          scpNumber: extractScpNumber(value.title || '', key)
-        });
-      }
-    } catch (err) {
-      console.error(`Failed loading ${file}:`, err);
+      merged.push({
+        key: `${group}::${key}`,
+        originalKey: key,
+        title: value.title || key,
+        creator: value.creator || value.attributions?.[0] || 'Unknown',
+        attributions: Array.isArray(value.attributions) ? value.attributions : [],
+        tags: Array.isArray(value.tags) ? value.tags : [],
+        images: Array.isArray(value.images) ? value.images : [],
+        url: normalizeUrl(value.url || ''),
+        link: value.link || key,
+        raw_content: value.raw_content || value.raw_source || '',
+        raw_source: value.raw_source || '',
+        rating: value.rating ?? 'N/A',
+        createdAt: value.createdAt || null,
+        children: Array.isArray(value.children) ? value.children : [],
+        group,
+        groupLabel,
+        sourceFile: file.file,
+        scpNumber: extractScpNumber(value.title || '', key)
+      });
     }
   }
 
@@ -1020,9 +996,20 @@ async function cacheAllPagesCompressed() {
   }
 }
 
-function init() {
+if (window.scpApp?.onCromSyncLog) {
+  window.scpApp.onCromSyncLog((payload) => {
+    if (payload.level === 'error') {
+      console.error(`[Crom sync] ${payload.message}`, payload.progress || payload.result || '');
+    } else {
+      console.log(`[Crom sync] ${payload.message}`, payload.progress || payload.result || '');
+    }
+  });
+}
+
+async function init() {
   try {
-    loadAllJsonFiles();
+    await loadAllJsonFiles();
+
     buildGroupDropdown();
 
     groupSelect.addEventListener('change', () => {
@@ -1031,18 +1018,14 @@ function init() {
     });
 
     searchInput.addEventListener('input', applyFilters);
-
     speakBtn.addEventListener('click', speakCurrentArticle);
     pauseBtn.addEventListener('click', pauseOrResumeSpeech);
     stopBtn.addEventListener('click', stopSpeech);
 
-    downloadCompressedBtn.addEventListener('click', cacheAllPagesCompressed);
-    downloadHdBtn.addEventListener('click', () => cacheCurrentPage('hd'));
-    refreshOfflineBtn.addEventListener('click', () => {
-      if (currentEntry) {
-        renderArticle(currentEntry, { pushHistory: false });
-      }
-    });
+    const syncBtn = document.getElementById('syncCromBtn');
+    if (syncBtn) {
+      syncBtn.addEventListener('click', syncCromDebug);
+    }
 
     applyFilters();
 
@@ -1063,6 +1046,40 @@ function init() {
     pageTitle.textContent = 'Failed to load SCP files';
     appMeta.textContent = 'Check the console for details.';
     pageContent.innerHTML = `<pre>${escapeHtml(err.stack || err.message)}</pre>`;
+  }
+}
+
+async function syncCromDebug() {
+  const syncBtn = document.getElementById('syncCromBtn');
+  const oldText = syncBtn ? syncBtn.textContent : '';
+
+  try {
+    if (syncBtn) {
+      syncBtn.disabled = true;
+      syncBtn.textContent = 'Syncing...';
+    }
+
+    appMeta.textContent = 'Syncing from Crom. Existing data remains available if this fails.';
+
+    const result = await window.scpApp.syncCromScp();
+
+    await loadAllJsonFiles();
+    buildGroupDropdown();
+    applyFilters();
+
+    if (filteredEntries.length) {
+      renderArticle(filteredEntries[0], { pushHistory: false });
+    }
+
+    appMeta.textContent = `Crom sync complete: ${result.articleCount} articles saved.`;
+  } catch (err) {
+    console.error('Crom sync failed:', err);
+    appMeta.textContent = `Crom sync failed. Continuing with existing local data. ${err.message || err}`;
+  } finally {
+    if (syncBtn) {
+      syncBtn.disabled = false;
+      syncBtn.textContent = oldText || 'Sync Crom';
+    }
   }
 }
 
