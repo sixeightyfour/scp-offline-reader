@@ -1101,4 +1101,264 @@ window.addEventListener('popstate', (event) => {
 
 speechSynthesis.onvoiceschanged = () => {};
 
+// ---- Image-cache removal overrides ----
+// This block disables all local image caching and uses remote image URLs directly.
+// It also avoids ipcRenderer/path/fs/crypto/http/https/sharp usage in the renderer.
+
+function getEntryImageUrls(item) {
+  const urls = new Set();
+
+  if (Array.isArray(item?.images)) {
+    for (const src of item.images) {
+      const normalized = normalizeUrl(src);
+      if (normalized) urls.add(normalized);
+    }
+  }
+
+  try {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(item?.raw_content || '', 'text/html');
+
+    doc.querySelectorAll('img[src]').forEach((img) => {
+      const normalized = normalizeUrl(img.getAttribute('src') || '');
+      if (normalized) urls.add(normalized);
+    });
+  } catch {
+    // Ignore malformed article HTML.
+  }
+
+  return [...urls];
+}
+
+function sanitizeHtml(rawHtml = '', item = null) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(rawHtml, 'text/html');
+
+  doc.querySelectorAll('script, iframe, object, embed').forEach((el) => {
+    el.remove();
+  });
+
+  doc.querySelectorAll('.preview').forEach((el) => {
+    el.remove();
+  });
+
+  doc.querySelectorAll('*').forEach((el) => {
+    [...el.attributes].forEach((attr) => {
+      const name = attr.name.toLowerCase();
+      const value = attr.value || '';
+
+      if (name.startsWith('on')) {
+        el.removeAttribute(attr.name);
+      }
+
+      if (
+        (name === 'href' || name === 'src') &&
+        value.trim().toLowerCase().startsWith('javascript:')
+      ) {
+        el.removeAttribute(attr.name);
+      }
+    });
+  });
+
+  doc.querySelectorAll('a[href]').forEach((a) => {
+    const rawHref = a.getAttribute('href') || '';
+    const normalizedHref = normalizeUrl(rawHref);
+
+    if (normalizedHref) {
+      a.setAttribute('href', normalizedHref);
+    }
+
+    a.removeAttribute('target');
+    a.removeAttribute('rel');
+
+    if (isInternalWikiHref(rawHref) || isInternalWikiHref(normalizedHref)) {
+      const match = findEntryByHref(rawHref) || findEntryByHref(normalizedHref);
+
+      if (match) {
+        a.dataset.offlineKey = match.key;
+        a.classList.add('offline-internal-link');
+      } else {
+        a.classList.add('offline-missing-link');
+        a.title = 'This wiki link is not available in the offline archive.';
+      }
+    }
+  });
+
+  doc.querySelectorAll('img[src]').forEach((img) => {
+    const src = normalizeUrl(img.getAttribute('src') || '');
+
+    if (src) {
+      img.setAttribute('src', src);
+    }
+
+    img.setAttribute('loading', 'lazy');
+  });
+
+  const page = doc.querySelector('#page-content');
+  return page ? page.innerHTML : doc.body.innerHTML;
+}
+
+function wireLinks(root) {
+  root.querySelectorAll('a[href]').forEach((a) => {
+    if (a.dataset.wired === 'true') return;
+
+    a.dataset.wired = 'true';
+
+    a.addEventListener('click', (e) => {
+      const href = a.getAttribute('href') || '';
+      const offlineKey = a.dataset.offlineKey || '';
+
+      if (offlineKey) {
+        const item = entries.find((entry) => entry.key === offlineKey);
+
+        if (item) {
+          e.preventDefault();
+          renderArticle(item);
+          drawSidebarList(filteredEntries);
+          return;
+        }
+      }
+
+      if (!href || href === '#') {
+        e.preventDefault();
+        return;
+      }
+
+      if (href.startsWith('#')) {
+        const id = href.slice(1);
+        if (!id) return;
+
+        const target =
+          document.getElementById(id) ||
+          pageContent.querySelector(`[id="${CSS.escape(id)}"]`);
+
+        if (target) {
+          e.preventDefault();
+          target.scrollIntoView({
+            behavior: 'smooth',
+            block: 'start'
+          });
+        }
+
+        return;
+      }
+
+      if (/^https?:\/\//i.test(href)) {
+        e.preventDefault();
+        window.scpApp.openExternal(href);
+      }
+    });
+  });
+}
+
+function openRemoteImage(src) {
+  const remoteUrl = normalizeUrl(src);
+
+  if (/^https?:\/\//i.test(remoteUrl)) {
+    window.scpApp.openExternal(remoteUrl);
+  }
+}
+
+function renderImages(images) {
+  imageStrip.innerHTML = '';
+
+  if (!Array.isArray(images) || !images.length) {
+    return;
+  }
+
+  for (const src of images) {
+    const normalized = normalizeUrl(src);
+    if (!normalized) continue;
+
+    const img = document.createElement('img');
+    img.src = normalized;
+    img.loading = 'lazy';
+
+    img.addEventListener('click', () => {
+      openRemoteImage(normalized);
+    });
+
+    imageStrip.appendChild(img);
+  }
+}
+
+function updateOfflineStatus(item) {
+  if (!item) {
+    offlineStatus.textContent = '';
+    return;
+  }
+
+  const urls = getEntryImageUrls(item);
+
+  if (!urls.length) {
+    offlineStatus.textContent = 'No images detected for this page.';
+    return;
+  }
+
+  offlineStatus.textContent = `Images loaded remotely: ${urls.length}`;
+}
+
+function renderArticle(item, options = {}) {
+  const { pushHistory = true } = options;
+
+  currentEntry = item;
+  stopSpeech();
+
+  const tags =
+    Array.isArray(item.tags) && item.tags.length
+      ? item.tags.join(', ')
+      : 'None';
+
+  const safeHtml = sanitizeHtml(item.raw_content || '', item);
+
+  pageTitle.textContent = item.title || item.originalKey;
+
+  appMeta.innerHTML = `
+    <div>Author: ${escapeHtml(item.creator || 'Unknown')}</div>
+    <div>Source file: ${escapeHtml(item.sourceFile || 'Unknown')}</div>
+    <div>URL: ${
+      item.url
+        ? `<a href="${escapeHtml(item.url)}">${escapeHtml(item.url)}</a>`
+        : 'N/A'
+    }</div>
+    <div>Tags: ${escapeHtml(tags)}</div>
+    <div>Rating: ${escapeHtml(String(item.rating ?? 'N/A'))}</div>
+  `;
+
+  renderImages(item.images);
+
+  pageContent.innerHTML = safeHtml;
+
+  wireLinks(appMeta);
+  wireLinks(pageContent);
+  wireCollapsibles(pageContent);
+
+  pageContent.querySelectorAll('img[src]').forEach((img) => {
+    const src = img.getAttribute('src') || '';
+
+    img.addEventListener('click', () => {
+      openRemoteImage(src);
+    });
+  });
+
+  updateOfflineStatus(item);
+
+  if (pushHistory) {
+    updateHistory(item);
+  }
+
+  window.scrollTo({
+    top: 0,
+    behavior: 'instant'
+  });
+}
+
+async function cacheCurrentPage() {
+  updateOfflineStatus(currentEntry);
+}
+
+async function cacheAllPagesCompressed() {
+  updateOfflineStatus(currentEntry);
+}
+
 init();

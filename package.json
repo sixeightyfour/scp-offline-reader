@@ -13,6 +13,7 @@
     "dist:dir": "electron-builder --dir"
   },
   "dependencies": {
+    "@r74tech/ftml-wasm": "^1.24.0",
     "sharp": "^0.33.5"
   },
   "devDependencies": {

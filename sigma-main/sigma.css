@@ -11,11 +11,9 @@
 
 @charset "utf-8";
 
-@import url('https://rsms.me/inter/inter.css');
-@import url('https://maxcdn.bootstrapcdn.com/font-awesome/4.3.0/css/font-awesome.min.css');
-
-/* Don't remove Bauhaus yet, still onsite dependencies to resolve */
-@import url('https://scp-wiki.wdfiles.com/local--files/component%3Atheme/font-bauhaus.css');
+@import url("../offline-assets/fonts/inter.css");
+@import url("../offline-assets/fonts/font-awesome.min.css");
+@import url("../offline-assets/fonts/font-bauhaus.css");
 
 /* FONT-FACE */
 
@@ -33,7 +31,7 @@
 	font-style: normal;
 	font-weight: 400;
 	font-display: swap;
-	src: url('https://cdn.scpwiki.com/theme/en/sigma/fonts/RedactRect.woff2')
+	src: url("../offline-assets/fonts/RedactRect.woff2")
 		format('woff2');
 	unicode-range: U+2588;
 }
@@ -163,7 +161,7 @@ textarea {
 }
 
 div#container-wrap {
-	background: url('https://cdn.scpwiki.com/theme/en/sigma/images/body_bg.svg')
+	background: url("../offline-assets/images/body_bg.svg")
 		top left repeat-x;
 }
 
@@ -179,7 +177,7 @@ sup {
 	position: relative;
 	z-index: 10;
 	padding-bottom: 22px; /* FOR MENU */
-	background: url('https://cdn.scpwiki.com/theme/en/sigma/images/header-logo.svg')
+	background: url("../offline-assets/images/header-logo.svg")
 		10px 40px no-repeat;
 	background-size: 100px;
 	background-position: 10px 64%;

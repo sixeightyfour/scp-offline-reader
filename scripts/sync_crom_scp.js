@@ -1,14 +1,19 @@
 const fs = require('fs');
 const path = require('path');
 
+const { renderWikidotSourceToHtml } = require('./ftml_render');
+
 const CROM_ENDPOINT = 'https://api.crom.avn.sh/graphql';
+
+// Change these back to your full range when ready.
 const START = 2;
-const END = 10;;
+const END = 10;
+
 const BATCH_SIZE = 15;
 const REQUEST_DELAY_MS = 500;
 
 function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function scpSlug(n) {
@@ -19,8 +24,29 @@ function scpUrl(n) {
   return `http://scp-wiki.wikidot.com/${scpSlug(n)}`;
 }
 
+function sanitizeUnusualLineTerminators(value) {
+  if (typeof value === 'string') {
+    return value.replace(/\u2028/g, '\n').replace(/\u2029/g, '\n');
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(sanitizeUnusualLineTerminators);
+  }
+
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, val]) => [
+        key,
+        sanitizeUnusualLineTerminators(val)
+      ])
+    );
+  }
+
+  return value;
+}
+
 function buildBatchQuery(numbers) {
-  const parts = numbers.map(n => {
+  const parts = numbers.map((n) => {
     const alias = `p${String(n).padStart(4, '0')}`;
     const url = scpUrl(n);
 
@@ -84,40 +110,86 @@ function normalizeAttributions(rawAttributions) {
 
   for (const item of rawAttributions) {
     const name = item?.user?.name;
+
     if (name && typeof name === 'string') {
       names.push(name.trim());
     }
   }
 
   const deduped = [...new Set(names.filter(Boolean))];
+
   return deduped.length ? deduped : ['Unknown user'];
 }
 
-function normalizePage(n, page) {
+async function renderSourceForPage(source, pageInfo) {
+  if (!source || typeof source !== 'string') {
+    return '';
+  }
+
+  try {
+    const rendered = await renderWikidotSourceToHtml(source, pageInfo);
+    return rendered.html || '';
+  } catch (err) {
+    console.warn('[Crom sync] FTML render failed; storing empty raw_content', {
+      page: pageInfo.page,
+      title: pageInfo.title,
+      error: err && (err.stack || err.message || String(err))
+    });
+
+    return '';
+  }
+}
+
+async function normalizePage(n, page) {
   if (!page?.wikidotInfo) return null;
 
   const info = page.wikidotInfo;
   const slug = scpSlug(n);
   const attributions = normalizeAttributions(page.attributions);
   const creator = attributions[0] || 'Unknown user';
+  const tags = Array.isArray(info.tags) ? info.tags : [];
+  const rating = info.rating ?? 0;
+  const rawSource = info.source || '';
+
+  const pageInfo = {
+    page: slug,
+    site: 'scp-wiki',
+    title: info.title || slug.toUpperCase(),
+    score: Number.isFinite(Number(rating)) ? Number(rating) : 0,
+    rating: Number.isFinite(Number(rating)) ? Number(rating) : 0,
+    tags,
+    language: 'en'
+  };
+
+  const rawContent = await renderSourceForPage(rawSource, pageInfo);
 
   return {
     title: info.title || slug.toUpperCase(),
     creator,
     attributions,
-    tags: Array.isArray(info.tags) ? info.tags : [],
+    tags,
     images: [],
     url: page.url || scpUrl(n),
     link: slug,
-    raw_content: info.source || '',
-    raw_source: info.source || '',
+
+    // Rendered HTML for the Electron reader.
+    raw_content: rawContent,
+
+    // Original Crom/Wikidot source for debugging or future conversion.
+    raw_source: rawSource,
+
+    content_format: rawContent ? 'ftml-html' : 'wikidot-source-unrendered',
+
     rating: info.rating ?? 'N/A',
     createdAt: info.createdAt || null,
+
     children: Array.isArray(info.children)
-      ? info.children.map(child => ({
-          url: child?.url || '',
-          raw_source: child?.wikidotInfo?.source || ''
-        })).filter(child => child.url || child.raw_source)
+      ? info.children
+          .map((child) => ({
+            url: child?.url || '',
+            raw_source: child?.wikidotInfo?.source || ''
+          }))
+          .filter((child) => child.url || child.raw_source)
       : []
   };
 }
@@ -164,21 +236,26 @@ async function fetchScpDataset({ onProgress } = {}) {
 
       let addedThisBatch = 0;
       let missingThisBatch = 0;
+      let renderFailedThisBatch = 0;
 
       for (const n of batch) {
         const alias = `p${String(n).padStart(4, '0')}`;
-        const page = normalizePage(n, data?.[alias]);
+        const page = await normalizePage(n, data?.[alias]);
 
         if (page) {
           output[scpSlug(n)] = page;
           addedThisBatch += 1;
+
+          if (page.content_format !== 'ftml-html') {
+            renderFailedThisBatch += 1;
+          }
         } else {
           missingThisBatch += 1;
         }
       }
 
       console.log(
-        `[Crom sync] Batch ${batchNumber}/${totalBatches} complete: added ${addedThisBatch}, missing ${missingThisBatch}, total stored ${Object.keys(output).length}`
+        `[Crom sync] Batch ${batchNumber}/${totalBatches} complete: added ${addedThisBatch}, missing ${missingThisBatch}, render failed ${renderFailedThisBatch}, total stored ${Object.keys(output).length}`
       );
 
       onProgress?.({
@@ -191,6 +268,7 @@ async function fetchScpDataset({ onProgress } = {}) {
         total: numbers.length,
         addedThisBatch,
         missingThisBatch,
+        renderFailedThisBatch,
         articleCount: Object.keys(output).length
       });
     } catch (err) {
@@ -230,25 +308,26 @@ async function syncCromScpDataset(outputPath, { onProgress } = {}) {
   console.log(`[Crom sync] Output file: ${outputPath}`);
 
   const dataset = await fetchScpDataset({ onProgress });
+  const sanitizedDataset = sanitizeUnusualLineTerminators(dataset);
 
-  console.log(`[Crom sync] Writing ${Object.keys(dataset).length} articles to disk...`);
+  console.log(`[Crom sync] Writing ${Object.keys(sanitizedDataset).length} articles to disk...`);
 
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
 
   fs.writeFileSync(
     outputPath,
-    JSON.stringify(dataset, null, 2),
+    JSON.stringify(sanitizedDataset, null, 2),
     'utf8'
   );
 
   const result = {
     outputPath,
-    articleCount: Object.keys(dataset).length,
+    articleCount: Object.keys(sanitizedDataset).length,
     generatedAt: new Date().toISOString()
   };
 
-  console.log(`[Crom sync] Write complete.`);
-  console.log(`[Crom sync] Result:`, result);
+  console.log('[Crom sync] Write complete.');
+  console.log('[Crom sync] Result:', result);
 
   return result;
 }
@@ -258,10 +337,7 @@ module.exports = {
 };
 
 if (require.main === module) {
-  const outputPath = path.join(
-    process.cwd(),
-    'content_crom_scp.json'
-  );
+  const outputPath = path.join(process.cwd(), 'content_crom_scp.json');
 
   syncCromScpDataset(outputPath, {
     onProgress: (progress) => {
@@ -270,7 +346,7 @@ if (require.main === module) {
 
       if (progress.phase === 'batch-complete') {
         console.log(
-          `[Crom sync] Batch ${progress.batchNumber}/${progress.totalBatches} complete: SCP-${start} through SCP-${end}; added ${progress.addedThisBatch}, missing ${progress.missingThisBatch}, total ${progress.articleCount}`
+          `[Crom sync] Batch ${progress.batchNumber}/${progress.totalBatches} complete: SCP-${start} through SCP-${end}; added ${progress.addedThisBatch}, missing ${progress.missingThisBatch}, render failed ${progress.renderFailedThisBatch}, total ${progress.articleCount}`
         );
       } else if (progress.phase === 'batch-failed') {
         console.error(
