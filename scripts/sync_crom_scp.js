@@ -7,7 +7,7 @@ const CROM_ENDPOINT = 'https://api.crom.avn.sh/graphql';
 
 // Change these back to your full range when ready.
 const START = 2;
-const END = 10;
+const END = 500;
 
 const BATCH_SIZE = 15;
 const REQUEST_DELAY_MS = 500;

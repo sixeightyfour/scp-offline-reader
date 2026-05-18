@@ -70,6 +70,81 @@ function saveUserManifest(manifest) {
   fs.writeFileSync(USER_MANIFEST_PATH, JSON.stringify(manifest, null, 2), 'utf8');
 }
 
+function installFtmlCollapsibleHandler() {
+  if (window.__ftmlCollapsibleHandlerInstalled) {
+    return;
+  }
+
+  window.__ftmlCollapsibleHandlerInstalled = true;
+
+  document.addEventListener(
+    'click',
+    (event) => {
+      const button = event.target.closest(
+        '.wj-collapsible-button-bottom, wj-collapsible-button-bottom'
+      );
+
+      if (!button) {
+        return;
+      }
+
+      const pageContent = document.getElementById('page-content');
+
+      if (!pageContent || !pageContent.contains(button)) {
+        return;
+      }
+
+      const details = button.closest('details.wj-collapsible');
+
+      if (!details) {
+        console.warn('[FTML collapsible] Bottom button has no parent details', button);
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      details.open = !details.open;
+    },
+    true
+  );
+
+  document.addEventListener(
+    'keydown',
+    (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') {
+        return;
+      }
+
+      const button = event.target.closest(
+        '.wj-collapsible-button-bottom, wj-collapsible-button-bottom'
+      );
+
+      if (!button) {
+        return;
+      }
+
+      const pageContent = document.getElementById('page-content');
+
+      if (!pageContent || !pageContent.contains(button)) {
+        return;
+      }
+
+      const details = button.closest('details.wj-collapsible');
+
+      if (!details) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      details.open = !details.open;
+    },
+    true
+  );
+}
+
 function toFileUrl(filePath = '') {
   return pathToFileURL(filePath).href;
 }
@@ -197,6 +272,76 @@ function findEntryByHref(href = '') {
     entryLookup.get(pathOnly) ||
     entryLookup.get(`/${pathOnly}`) ||
     null
+  );
+}
+
+function installFootnoteTooltipPositioning() {
+  if (window.__footnoteTooltipPositioningInstalled) {
+    return;
+  }
+
+  window.__footnoteTooltipPositioningInstalled = true;
+
+  function positionTooltip(ref) {
+    const tooltip = ref.querySelector('.wj-footnote-ref-tooltip');
+
+    if (!tooltip) {
+      return;
+    }
+
+    tooltip.style.left = '50%';
+    tooltip.style.right = 'auto';
+    tooltip.style.transform = 'translateX(-50%)';
+
+    const article = document.getElementById('page-content');
+
+    if (!article) {
+      return;
+    }
+
+    const articleRect = article.getBoundingClientRect();
+    const tooltipRect = tooltip.getBoundingClientRect();
+
+    const overflowLeft = articleRect.left - tooltipRect.left + 12;
+    const overflowRight = tooltipRect.right - articleRect.right + 12;
+
+    if (overflowLeft > 0) {
+      tooltip.style.left = `calc(50% + ${overflowLeft}px)`;
+    } else if (overflowRight > 0) {
+      tooltip.style.left = `calc(50% - ${overflowRight}px)`;
+    }
+  }
+
+  document.addEventListener(
+    'mouseover',
+    (event) => {
+      const ref = event.target.closest('.wj-footnote-ref');
+
+      if (!ref) {
+        return;
+      }
+
+      requestAnimationFrame(() => {
+        positionTooltip(ref);
+      });
+    },
+    true
+  );
+
+  document.addEventListener(
+    'focusin',
+    (event) => {
+      const ref = event.target.closest('.wj-footnote-ref');
+
+      if (!ref) {
+        return;
+      }
+
+      requestAnimationFrame(() => {
+        positionTooltip(ref);
+      });
+    },
+    true
   );
 }
 
@@ -871,6 +1016,7 @@ function renderArticle(item, options = {}) {
   wireLinks(appMeta);
   wireLinks(pageContent);
   wireCollapsibles(pageContent);
+  wireFtmlCollapsibles(pageContent);
 
   pageContent.querySelectorAll('img[src]').forEach(img => {
     const displayedSrc = img.getAttribute('src') || '';
@@ -1011,6 +1157,8 @@ async function init() {
     await loadAllJsonFiles();
 
     buildGroupDropdown();
+    installFtmlCollapsibleHandler();
+    installFootnoteTooltipPositioning();
 
     groupSelect.addEventListener('change', () => {
       currentGroup = groupSelect.value;

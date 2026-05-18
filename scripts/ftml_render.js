@@ -57,6 +57,7 @@ function normalizeFtmlSource(source) {
     .replace(/\[\[include\s+component:[^\]]+\]\]/gi, '');
 }
 
+
 async function renderWikidotSourceToHtml(source, info = {}) {
   const ftml = await getFtml();
 
