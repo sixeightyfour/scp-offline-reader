@@ -9,7 +9,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>SCP Reader</title>
 
-  <link rel="stylesheet" href="sigma-main/sigma.css" />
+  <link rel="stylesheet" href="./offline-assets/wikidot-base/style.css" />
+  <link rel="stylesheet" href="./sigma-main/sigma.css" />
+  <link rel="stylesheet" href="./wikidot-fallback.css">
 
   <style>
     * {
@@ -49,7 +51,7 @@
     }
 
     #header {
-      position: sticky;
+      position: static;
       top: 0;
       z-index: 10;
       box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
@@ -148,6 +150,8 @@
       display: flex;
       gap: 0.45rem;
       margin-bottom: 0.55rem;
+      font-size: 0.75rem;
+      justify-content: center;
     }
 
     #tts-row button,
@@ -294,6 +298,28 @@
       max-width: 100%;
     }
 
+    #wj-karma {
+      visibility: hidden;
+    }
+
+    svg.wj-sprite.sprite-wj-karma {
+      max-height: 0;
+    }
+
+    #top-bar {
+      position: absolute;
+      top: 140px;
+      height: 21px;
+      width: 100%;
+      line-height: 18px;
+      padding: 0;
+      margin: 0 auto;
+      z-index: 20;
+      font-size: .9em;
+      color: white;
+      text-align: end;
+    }
+
     .offline-missing-link {
       color: #888 !important;
       cursor: not-allowed;
@@ -307,7 +333,7 @@
     #footer {
       margin-top: 1rem;
       font-size: 0.85rem;
-      color: var(--text-soft);
+      color: #fff;
     }
 
     @media (max-width: 1100px) {
@@ -353,6 +379,9 @@
         <div id="header">
           <h1><span>SCP Foundation</span></h1>
           <h2>Secure, Contain, Protect</h2>
+          <div id="top-bar">
+              TODO: Top-Bar Features
+          </div>
         </div>
 
         <div id="content-wrap">
@@ -361,26 +390,13 @@
               <div class="app-panel-body">
                 <div class="heading">Offline Archive</div>
                 <div class="app-muted">
-                  Search articles, browse by content file, read pages aloud, and use cached images offline.
+                  For reading the Wiki, on or offline.
                 </div>
 
-                <label for="groupSelect" class="app-muted">Content file</label>
-                <select id="groupSelect" aria-label="Select content file"></select>
-
-                <label for="searchInput" class="app-muted">Search</label>
-                <input
-                  id="searchInput"
-                  type="text"
-                  placeholder="Search SCPs, tags, author..."
-                  autocomplete="off"
-                />
-
-                <div id="tts-row">
-                  <button id="speakBtn" class="primary-btn" type="button">Speak</button>
-                  <button id="pauseBtn" class="secondary-btn" type="button">Pause</button>
-                  <button id="stopBtn" class="ghost-btn" type="button">Stop</button>
-                </div>
-
+                <button id="syncCromBtn" type="button" title="Debug: sync SCP data from Crom">
+                  Sync Crom
+                </button>
+      
                 <div id="offline-row">
                   <button id="downloadCompressedBtn" class="secondary-btn" type="button">
                     Cache All Images
@@ -389,6 +405,20 @@
                     Download HD (This Page)
                   </button>
                 </div>
+
+                <!--
+                <label for="groupSelect" class="app-muted">Content file</label>
+                <select id="groupSelect" aria-label="Select content file"></select>
+                -->
+
+                <label for="searchInput" class="app-muted">Search</label>
+                <input
+                  id="searchInput"
+                  type="text"
+                  placeholder="Search SCPs, tags, author..."
+                  autocomplete="off"
+                  style="font-size: 0.65rem;"
+                />
 
                 <div id="stats">Loading files...</div>
                 <div id="scpList"></div>

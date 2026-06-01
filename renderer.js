@@ -1,12 +1,3 @@
-const fs = require('fs');
-const path = require('path');
-const { pathToFileURL } = require('url');
-const http = require('http');
-const https = require('https');
-const crypto = require('crypto');
-const sharp = require('sharp');
-const { ipcRenderer } = require('electron');
-
 const sidebarList = document.getElementById('scpList');
 const searchInput = document.getElementById('searchInput');
 const groupSelect = document.getElementById('groupSelect');
@@ -33,7 +24,7 @@ let currentGroup = 'all';
 
 const entryLookup = new Map();
 
-const APP_PATHS = ipcRenderer.sendSync('app:get-paths');
+const APP_PATHS = window.scpApp.paths;
 
 console.log('APP_PATHS', APP_PATHS);
 
@@ -46,8 +37,8 @@ const USER_MANIFEST_PATH = APP_PATHS.userManifestPath;
 const BUNDLED_CACHE_DIR = APP_PATHS.bundledCacheDir;
 const BUNDLED_MANIFEST_PATH = APP_PATHS.bundledManifestPath;
 
-ensureDir(USER_DATA_DIR);
-ensureDir(USER_CACHE_DIR);
+//ensureDir(USER_DATA_DIR);
+//ensureDir(USER_CACHE_DIR);
 
 function ensureDir(dir) {
   if (!fs.existsSync(dir)) {
@@ -77,6 +68,81 @@ function loadBundledManifest() {
 
 function saveUserManifest(manifest) {
   fs.writeFileSync(USER_MANIFEST_PATH, JSON.stringify(manifest, null, 2), 'utf8');
+}
+
+function installFtmlCollapsibleHandler() {
+  if (window.__ftmlCollapsibleHandlerInstalled) {
+    return;
+  }
+
+  window.__ftmlCollapsibleHandlerInstalled = true;
+
+  document.addEventListener(
+    'click',
+    (event) => {
+      const button = event.target.closest(
+        '.wj-collapsible-button-bottom, wj-collapsible-button-bottom'
+      );
+
+      if (!button) {
+        return;
+      }
+
+      const pageContent = document.getElementById('page-content');
+
+      if (!pageContent || !pageContent.contains(button)) {
+        return;
+      }
+
+      const details = button.closest('details.wj-collapsible');
+
+      if (!details) {
+        console.warn('[FTML collapsible] Bottom button has no parent details', button);
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      details.open = !details.open;
+    },
+    true
+  );
+
+  document.addEventListener(
+    'keydown',
+    (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') {
+        return;
+      }
+
+      const button = event.target.closest(
+        '.wj-collapsible-button-bottom, wj-collapsible-button-bottom'
+      );
+
+      if (!button) {
+        return;
+      }
+
+      const pageContent = document.getElementById('page-content');
+
+      if (!pageContent || !pageContent.contains(button)) {
+        return;
+      }
+
+      const details = button.closest('details.wj-collapsible');
+
+      if (!details) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      details.open = !details.open;
+    },
+    true
+  );
 }
 
 function toFileUrl(filePath = '') {
@@ -209,6 +275,76 @@ function findEntryByHref(href = '') {
   );
 }
 
+function installFootnoteTooltipPositioning() {
+  if (window.__footnoteTooltipPositioningInstalled) {
+    return;
+  }
+
+  window.__footnoteTooltipPositioningInstalled = true;
+
+  function positionTooltip(ref) {
+    const tooltip = ref.querySelector('.wj-footnote-ref-tooltip');
+
+    if (!tooltip) {
+      return;
+    }
+
+    tooltip.style.left = '50%';
+    tooltip.style.right = 'auto';
+    tooltip.style.transform = 'translateX(-50%)';
+
+    const article = document.getElementById('page-content');
+
+    if (!article) {
+      return;
+    }
+
+    const articleRect = article.getBoundingClientRect();
+    const tooltipRect = tooltip.getBoundingClientRect();
+
+    const overflowLeft = articleRect.left - tooltipRect.left + 12;
+    const overflowRight = tooltipRect.right - articleRect.right + 12;
+
+    if (overflowLeft > 0) {
+      tooltip.style.left = `calc(50% + ${overflowLeft}px)`;
+    } else if (overflowRight > 0) {
+      tooltip.style.left = `calc(50% - ${overflowRight}px)`;
+    }
+  }
+
+  document.addEventListener(
+    'mouseover',
+    (event) => {
+      const ref = event.target.closest('.wj-footnote-ref');
+
+      if (!ref) {
+        return;
+      }
+
+      requestAnimationFrame(() => {
+        positionTooltip(ref);
+      });
+    },
+    true
+  );
+
+  document.addEventListener(
+    'focusin',
+    (event) => {
+      const ref = event.target.closest('.wj-footnote-ref');
+
+      if (!ref) {
+        return;
+      }
+
+      requestAnimationFrame(() => {
+        positionTooltip(ref);
+      });
+    },
+    true
+  );
+}
+
 function isInternalWikiHref(href = '') {
   const value = String(href).trim();
   if (!value) return false;
@@ -321,7 +457,7 @@ function buildImageRecord(url, item, mode, extOverride = '') {
   const absDir = path.join(USER_CACHE_DIR, pageSlug);
   const absPath = path.join(USER_DATA_DIR, relPath);
 
-  ensureDir(absDir);
+  //ensureDir(absDir);
 
   return {
     normalized,
@@ -559,63 +695,50 @@ function pauseOrResumeSpeech() {
   }
 }
 
+/*
 function stopSpeech() {
   speechSynthesis.cancel();
   pauseBtn.textContent = 'Pause';
 }
+*/
 
-function loadAllJsonFiles() {
-  const appDir = CONTENT_DIR;
-  console.log('Loading content from:', CONTENT_DIR);
-  const files = fs.readdirSync(appDir)
-    .filter(name => /^content_.*\.json$/i.test(name))
-    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-	console.log('Content files found:', files);
+async function loadAllJsonFiles() {
+  const loadedFiles = await window.scpApp.loadContent();
 
-  if (!files.length) {
+  if (!Array.isArray(loadedFiles) || !loadedFiles.length) {
     throw new Error('No content_*.json files found.');
   }
 
   const merged = [];
 
-  for (const file of files) {
-    const fullPath = path.join(appDir, file);
+  for (const file of loadedFiles) {
+    const group = file.file.replace(/\.json$/i, '');
+    const groupLabel = prettifyGroupName(file.file);
+    const parsed = file.data;
 
-    try {
-      const raw = fs.readFileSync(fullPath, 'utf8');
-      const parsed = JSON.parse(raw);
+    for (const [key, value] of Object.entries(parsed)) {
+      if (!value || typeof value !== 'object') continue;
 
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-        console.warn(`Skipping ${file}: JSON root is not an object.`);
-        continue;
-      }
-
-      const group = file.replace(/\.json$/i, '');
-      const groupLabel = prettifyGroupName(file);
-
-      for (const [key, value] of Object.entries(parsed)) {
-        if (!value || typeof value !== 'object') continue;
-
-        merged.push({
-          key: `${group}::${key}`,
-          originalKey: key,
-          title: value.title || key,
-          creator: value.creator || 'Unknown',
-          tags: Array.isArray(value.tags) ? value.tags : [],
-          images: Array.isArray(value.images) ? value.images : [],
-          url: normalizeUrl(value.url || ''),
-          link: value.link || '',
-          raw_content: value.raw_content || '',
-          raw_source: value.raw_source || '',
-          rating: value.rating ?? 'N/A',
-          group,
-          groupLabel,
-          sourceFile: file,
-          scpNumber: extractScpNumber(value.title || '', key)
-        });
-      }
-    } catch (err) {
-      console.error(`Failed loading ${file}:`, err);
+      merged.push({
+        key: `${group}::${key}`,
+        originalKey: key,
+        title: value.title || key,
+        creator: value.creator || value.attributions?.[0] || 'Unknown',
+        attributions: Array.isArray(value.attributions) ? value.attributions : [],
+        tags: Array.isArray(value.tags) ? value.tags : [],
+        images: Array.isArray(value.images) ? value.images : [],
+        url: normalizeUrl(value.url || ''),
+        link: value.link || key,
+        raw_content: value.raw_content || value.raw_source || '',
+        raw_source: value.raw_source || '',
+        rating: value.rating ?? 'N/A',
+        createdAt: value.createdAt || null,
+        children: Array.isArray(value.children) ? value.children : [],
+        group,
+        groupLabel,
+        sourceFile: file.file,
+        scpNumber: extractScpNumber(value.title || '', key)
+      });
     }
   }
 
@@ -629,6 +752,7 @@ function loadAllJsonFiles() {
   rebuildEntryLookup();
 }
 
+/*
 function buildGroupDropdown() {
   const groups = [...new Map(entries.map(item => [item.group, item.groupLabel])).entries()]
     .sort((a, b) => a[1].localeCompare(b[1], undefined, { numeric: true }));
@@ -649,6 +773,7 @@ function buildGroupDropdown() {
 
   groupSelect.value = currentGroup;
 }
+*/
 
 function applyFilters() {
   const q = (searchInput.value || '').trim().toLowerCase();
@@ -704,7 +829,9 @@ function drawSidebarList(list) {
 
     link.innerHTML = `
       <div class="scp-link-title">${escapeHtml(item.title)}</div>
+      <!--
       <div class="scp-link-sub">${escapeHtml(item.groupLabel)}</div>
+      -->
     `;
 
     link.addEventListener('click', (e) => {
@@ -870,7 +997,7 @@ function renderArticle(item, options = {}) {
   const { pushHistory = true } = options;
 
   currentEntry = item;
-  stopSpeech();
+  // stopSpeech();
 
   const tags = Array.isArray(item.tags) && item.tags.length ? item.tags.join(', ') : 'None';
   const safeHtml = sanitizeHtml(item.raw_content || '', item);
@@ -895,6 +1022,7 @@ function renderArticle(item, options = {}) {
   wireLinks(appMeta);
   wireLinks(pageContent);
   wireCollapsibles(pageContent);
+  wireFtmlCollapsibles(pageContent);
 
   pageContent.querySelectorAll('img[src]').forEach(img => {
     const displayedSrc = img.getAttribute('src') || '';
@@ -1020,29 +1148,43 @@ async function cacheAllPagesCompressed() {
   }
 }
 
-function init() {
-  try {
-    loadAllJsonFiles();
-    buildGroupDropdown();
+if (window.scpApp?.onCromSyncLog) {
+  window.scpApp.onCromSyncLog((payload) => {
+    if (payload.level === 'error') {
+      console.error(`[Crom sync] ${payload.message}`, payload.progress || payload.result || '');
+    } else {
+      console.log(`[Crom sync] ${payload.message}`, payload.progress || payload.result || '');
+    }
+  });
+}
 
+async function init() {
+  try {
+    await loadAllJsonFiles();
+
+    // buildGroupDropdown();
+    installFtmlCollapsibleHandler();
+    installFootnoteTooltipPositioning();
+
+    /*
     groupSelect.addEventListener('change', () => {
       currentGroup = groupSelect.value;
       applyFilters();
     });
+    */
 
     searchInput.addEventListener('input', applyFilters);
-
+    
+    /*
     speakBtn.addEventListener('click', speakCurrentArticle);
     pauseBtn.addEventListener('click', pauseOrResumeSpeech);
     stopBtn.addEventListener('click', stopSpeech);
+    */
 
-    downloadCompressedBtn.addEventListener('click', cacheAllPagesCompressed);
-    downloadHdBtn.addEventListener('click', () => cacheCurrentPage('hd'));
-    refreshOfflineBtn.addEventListener('click', () => {
-      if (currentEntry) {
-        renderArticle(currentEntry, { pushHistory: false });
-      }
-    });
+    const syncBtn = document.getElementById('syncCromBtn');
+    if (syncBtn) {
+      syncBtn.addEventListener('click', syncCromDebug);
+    }
 
     applyFilters();
 
@@ -1066,7 +1208,41 @@ function init() {
   }
 }
 
-window.addEventListener('beforeunload', stopSpeech);
+async function syncCromDebug() {
+  const syncBtn = document.getElementById('syncCromBtn');
+  const oldText = syncBtn ? syncBtn.textContent : '';
+
+  try {
+    if (syncBtn) {
+      syncBtn.disabled = true;
+      syncBtn.textContent = 'Syncing...';
+    }
+
+    appMeta.textContent = 'Syncing from Crom. Existing data remains available if this fails.';
+
+    const result = await window.scpApp.syncCromScp();
+
+    await loadAllJsonFiles();
+    // buildGroupDropdown();
+    applyFilters();
+
+    if (filteredEntries.length) {
+      renderArticle(filteredEntries[0], { pushHistory: false });
+    }
+
+    appMeta.textContent = `Crom sync complete: ${result.articleCount} articles saved.`;
+  } catch (err) {
+    console.error('Crom sync failed:', err);
+    appMeta.textContent = `Crom sync failed. Continuing with existing local data. ${err.message || err}`;
+  } finally {
+    if (syncBtn) {
+      syncBtn.disabled = false;
+      syncBtn.textContent = oldText || 'Sync Crom';
+    }
+  }
+}
+
+// window.addEventListener('beforeunload', stopSpeech);
 
 window.addEventListener('popstate', (event) => {
   const key = event.state?.key;
@@ -1083,5 +1259,267 @@ window.addEventListener('popstate', (event) => {
 });
 
 speechSynthesis.onvoiceschanged = () => {};
+
+// ---- Image-cache removal overrides ----
+// This block disables all local image caching and uses remote image URLs directly.
+// It also avoids ipcRenderer/path/fs/crypto/http/https/sharp usage in the renderer.
+
+function getEntryImageUrls(item) {
+  const urls = new Set();
+
+  if (Array.isArray(item?.images)) {
+    for (const src of item.images) {
+      const normalized = normalizeUrl(src);
+      if (normalized) urls.add(normalized);
+    }
+  }
+
+  try {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(item?.raw_content || '', 'text/html');
+
+    doc.querySelectorAll('img[src]').forEach((img) => {
+      const normalized = normalizeUrl(img.getAttribute('src') || '');
+      if (normalized) urls.add(normalized);
+    });
+  } catch {
+    // Ignore malformed article HTML.
+  }
+
+  return [...urls];
+}
+
+function sanitizeHtml(rawHtml = '', item = null) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(rawHtml, 'text/html');
+
+  doc.querySelectorAll('script, iframe, object, embed').forEach((el) => {
+    el.remove();
+  });
+
+  doc.querySelectorAll('.preview').forEach((el) => {
+    el.remove();
+  });
+
+  doc.querySelectorAll('*').forEach((el) => {
+    [...el.attributes].forEach((attr) => {
+      const name = attr.name.toLowerCase();
+      const value = attr.value || '';
+
+      if (name.startsWith('on')) {
+        el.removeAttribute(attr.name);
+      }
+
+      if (
+        (name === 'href' || name === 'src') &&
+        value.trim().toLowerCase().startsWith('javascript:')
+      ) {
+        el.removeAttribute(attr.name);
+      }
+    });
+  });
+
+  doc.querySelectorAll('a[href]').forEach((a) => {
+    const rawHref = a.getAttribute('href') || '';
+    const normalizedHref = normalizeUrl(rawHref);
+
+    if (normalizedHref) {
+      a.setAttribute('href', normalizedHref);
+    }
+
+    a.removeAttribute('target');
+    a.removeAttribute('rel');
+
+    if (isInternalWikiHref(rawHref) || isInternalWikiHref(normalizedHref)) {
+      const match = findEntryByHref(rawHref) || findEntryByHref(normalizedHref);
+
+      if (match) {
+        a.dataset.offlineKey = match.key;
+        a.classList.add('offline-internal-link');
+      } else {
+        a.classList.add('offline-missing-link');
+        a.title = 'This wiki link is not available in the offline archive.';
+      }
+    }
+  });
+
+  doc.querySelectorAll('img[src]').forEach((img) => {
+    const src = normalizeUrl(img.getAttribute('src') || '');
+
+    if (src) {
+      img.setAttribute('src', src);
+    }
+
+    img.setAttribute('loading', 'lazy');
+  });
+
+  const page = doc.querySelector('#page-content');
+  return page ? page.innerHTML : doc.body.innerHTML;
+}
+
+function wireLinks(root) {
+  root.querySelectorAll('a[href]').forEach((a) => {
+    if (a.dataset.wired === 'true') return;
+
+    a.dataset.wired = 'true';
+
+    a.addEventListener('click', (e) => {
+      const href = a.getAttribute('href') || '';
+      const offlineKey = a.dataset.offlineKey || '';
+
+      if (offlineKey) {
+        const item = entries.find((entry) => entry.key === offlineKey);
+
+        if (item) {
+          e.preventDefault();
+          renderArticle(item);
+          drawSidebarList(filteredEntries);
+          return;
+        }
+      }
+
+      if (!href || href === '#') {
+        e.preventDefault();
+        return;
+      }
+
+      if (href.startsWith('#')) {
+        const id = href.slice(1);
+        if (!id) return;
+
+        const target =
+          document.getElementById(id) ||
+          pageContent.querySelector(`[id="${CSS.escape(id)}"]`);
+
+        if (target) {
+          e.preventDefault();
+          target.scrollIntoView({
+            behavior: 'smooth',
+            block: 'start'
+          });
+        }
+
+        return;
+      }
+
+      if (/^https?:\/\//i.test(href)) {
+        e.preventDefault();
+        window.scpApp.openExternal(href);
+      }
+    });
+  });
+}
+
+function openRemoteImage(src) {
+  const remoteUrl = normalizeUrl(src);
+
+  if (/^https?:\/\//i.test(remoteUrl)) {
+    window.scpApp.openExternal(remoteUrl);
+  }
+}
+
+function renderImages(images) {
+  imageStrip.innerHTML = '';
+
+  if (!Array.isArray(images) || !images.length) {
+    return;
+  }
+
+  for (const src of images) {
+    const normalized = normalizeUrl(src);
+    if (!normalized) continue;
+
+    const img = document.createElement('img');
+    img.src = normalized;
+    img.loading = 'lazy';
+
+    img.addEventListener('click', () => {
+      openRemoteImage(normalized);
+    });
+
+    imageStrip.appendChild(img);
+  }
+}
+
+function updateOfflineStatus(item) {
+  if (!item) {
+    offlineStatus.textContent = '';
+    return;
+  }
+
+  const urls = getEntryImageUrls(item);
+
+  if (!urls.length) {
+    offlineStatus.textContent = 'No images detected for this page.';
+    return;
+  }
+
+  offlineStatus.textContent = `Images loaded remotely: ${urls.length}`;
+}
+
+function renderArticle(item, options = {}) {
+  const { pushHistory = true } = options;
+
+  currentEntry = item;
+  // stopSpeech();
+
+  const tags =
+    Array.isArray(item.tags) && item.tags.length
+      ? item.tags.join(', ')
+      : 'None';
+
+  const safeHtml = sanitizeHtml(item.raw_content || '', item);
+
+  pageTitle.textContent = item.title || item.originalKey;
+
+  appMeta.innerHTML = `
+    <div>Author: ${escapeHtml(item.creator || 'Unknown')}</div>
+    <!-- 
+    <div>Source file: ${escapeHtml(item.sourceFile || 'Unknown')}</div> 
+    -->
+    <div>URL: ${
+      item.url
+        ? `<a href="${escapeHtml(item.url)}">${escapeHtml(item.url)}</a>`
+        : 'N/A'
+    }</div>
+    <div>Tags: ${escapeHtml(tags)}</div>
+    <div>Rating: ${escapeHtml(String(item.rating ?? 'N/A'))}</div>
+  `;
+
+  renderImages(item.images);
+
+  pageContent.innerHTML = safeHtml;
+
+  wireLinks(appMeta);
+  wireLinks(pageContent);
+  wireCollapsibles(pageContent);
+
+  pageContent.querySelectorAll('img[src]').forEach((img) => {
+    const src = img.getAttribute('src') || '';
+
+    img.addEventListener('click', () => {
+      openRemoteImage(src);
+    });
+  });
+
+  updateOfflineStatus(item);
+
+  if (pushHistory) {
+    updateHistory(item);
+  }
+
+  window.scrollTo({
+    top: 0,
+    behavior: 'instant'
+  });
+}
+
+async function cacheCurrentPage() {
+  updateOfflineStatus(currentEntry);
+}
+
+async function cacheAllPagesCompressed() {
+  updateOfflineStatus(currentEntry);
+}
 
 init();
