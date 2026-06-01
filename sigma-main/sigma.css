@@ -266,13 +266,15 @@ sup {
 }
 
 #header h1 {
+	color:#eee;
 	margin-left: 120px;
-	padding: 0;
+	padding: 60px 0 25px;
 	float: left;
 	max-height: 95px;
 }
 
 #header h2 {
+	color: #f0f0c0;
 	margin-left: 120px;
 	padding: 0;
 	clear: left;
@@ -922,6 +924,7 @@ div.page-rate-widget-box .rate-points {
 .footer-wikiwalk-nav {
 	font-weight: bold;
 	font-size: 0.75em;
+	text-align:center;
 }
 
 /* Licensebox */

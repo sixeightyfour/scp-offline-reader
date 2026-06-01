@@ -695,10 +695,12 @@ function pauseOrResumeSpeech() {
   }
 }
 
+/*
 function stopSpeech() {
   speechSynthesis.cancel();
   pauseBtn.textContent = 'Pause';
 }
+*/
 
 async function loadAllJsonFiles() {
   const loadedFiles = await window.scpApp.loadContent();
@@ -750,6 +752,7 @@ async function loadAllJsonFiles() {
   rebuildEntryLookup();
 }
 
+/*
 function buildGroupDropdown() {
   const groups = [...new Map(entries.map(item => [item.group, item.groupLabel])).entries()]
     .sort((a, b) => a[1].localeCompare(b[1], undefined, { numeric: true }));
@@ -770,6 +773,7 @@ function buildGroupDropdown() {
 
   groupSelect.value = currentGroup;
 }
+*/
 
 function applyFilters() {
   const q = (searchInput.value || '').trim().toLowerCase();
@@ -825,7 +829,9 @@ function drawSidebarList(list) {
 
     link.innerHTML = `
       <div class="scp-link-title">${escapeHtml(item.title)}</div>
+      <!--
       <div class="scp-link-sub">${escapeHtml(item.groupLabel)}</div>
+      -->
     `;
 
     link.addEventListener('click', (e) => {
@@ -991,7 +997,7 @@ function renderArticle(item, options = {}) {
   const { pushHistory = true } = options;
 
   currentEntry = item;
-  stopSpeech();
+  // stopSpeech();
 
   const tags = Array.isArray(item.tags) && item.tags.length ? item.tags.join(', ') : 'None';
   const safeHtml = sanitizeHtml(item.raw_content || '', item);
@@ -1156,19 +1162,24 @@ async function init() {
   try {
     await loadAllJsonFiles();
 
-    buildGroupDropdown();
+    // buildGroupDropdown();
     installFtmlCollapsibleHandler();
     installFootnoteTooltipPositioning();
 
+    /*
     groupSelect.addEventListener('change', () => {
       currentGroup = groupSelect.value;
       applyFilters();
     });
+    */
 
     searchInput.addEventListener('input', applyFilters);
+    
+    /*
     speakBtn.addEventListener('click', speakCurrentArticle);
     pauseBtn.addEventListener('click', pauseOrResumeSpeech);
     stopBtn.addEventListener('click', stopSpeech);
+    */
 
     const syncBtn = document.getElementById('syncCromBtn');
     if (syncBtn) {
@@ -1212,7 +1223,7 @@ async function syncCromDebug() {
     const result = await window.scpApp.syncCromScp();
 
     await loadAllJsonFiles();
-    buildGroupDropdown();
+    // buildGroupDropdown();
     applyFilters();
 
     if (filteredEntries.length) {
@@ -1231,7 +1242,7 @@ async function syncCromDebug() {
   }
 }
 
-window.addEventListener('beforeunload', stopSpeech);
+// window.addEventListener('beforeunload', stopSpeech);
 
 window.addEventListener('popstate', (event) => {
   const key = event.state?.key;
@@ -1450,7 +1461,7 @@ function renderArticle(item, options = {}) {
   const { pushHistory = true } = options;
 
   currentEntry = item;
-  stopSpeech();
+  // stopSpeech();
 
   const tags =
     Array.isArray(item.tags) && item.tags.length
@@ -1463,7 +1474,9 @@ function renderArticle(item, options = {}) {
 
   appMeta.innerHTML = `
     <div>Author: ${escapeHtml(item.creator || 'Unknown')}</div>
-    <div>Source file: ${escapeHtml(item.sourceFile || 'Unknown')}</div>
+    <!-- 
+    <div>Source file: ${escapeHtml(item.sourceFile || 'Unknown')}</div> 
+    -->
     <div>URL: ${
       item.url
         ? `<a href="${escapeHtml(item.url)}">${escapeHtml(item.url)}</a>`
