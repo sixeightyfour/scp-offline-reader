@@ -298,6 +298,101 @@
       max-width: 100%;
     }
 
+    .offline-editor-panel {
+      padding: 1rem;
+    }
+
+    .offline-editor-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-bottom: 1rem;
+      padding-bottom: 0.85rem;
+      border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+    }
+
+    .offline-editor-header h1 {
+      margin: 0;
+      font-size: 1.5rem;
+    }
+
+    .offline-editor-header p {
+      margin: 0.25rem 0 0;
+      color: var(--text-soft);
+    }
+
+    .offline-editor-layout {
+      display: grid;
+      grid-template-columns: minmax(280px, 0.95fr) minmax(320px, 1.05fr);
+      gap: 1rem;
+      align-items: start;
+    }
+
+    .offline-editor-source-pane,
+    .offline-editor-preview-pane {
+      min-width: 0;
+    }
+
+    .offline-editor-source-pane label,
+    .offline-editor-preview-header {
+      display: block;
+      margin-bottom: 0.4rem;
+      font-weight: 700;
+    }
+
+    .offline-editor-source {
+      width: 100%;
+      min-height: 62vh;
+      box-sizing: border-box;
+      resize: vertical;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      font-size: 0.92rem;
+      line-height: 1.45;
+      padding: 0.75rem;
+      border-radius: 10px;
+      border: 1px solid rgba(0, 0, 0, 0.14);
+    }
+
+    .offline-editor-actions {
+      display: flex;
+      gap: 0.5rem;
+      margin-top: 0.75rem;
+    }
+
+    .offline-editor-actions button {
+      width: auto;
+      margin: 0;
+      padding: 0.65rem 0.9rem;
+      border-radius: 10px;
+      border: 1px solid rgba(0, 0, 0, 0.14);
+    }
+
+    .offline-editor-preview {
+      min-height: 62vh;
+      padding: 1rem;
+      overflow: auto;
+      border-radius: 10px;
+      border: 1px solid rgba(0, 0, 0, 0.1);
+      background: rgba(255, 255, 255, 0.82);
+    }
+
+    .muted {
+      color: var(--text-soft);
+    }
+
+    .editor-error {
+      border: 1px solid rgba(137, 29, 29, 0.35);
+      border-radius: 10px;
+      padding: 0.75rem;
+      background: rgba(137, 29, 29, 0.06);
+    }
+
+    .editor-error pre {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
     #wj-karma {
       visibility: hidden;
     }
@@ -380,7 +475,11 @@
           <h1><span>SCP Foundation</span></h1>
           <h2>Secure, Contain, Protect</h2>
           <div id="top-bar">
-              TODO: Top-Bar Features
+              <nav id="topbar-tools" class="topbar-tools" aria-label="Tools">
+                <button id="offlineEditorToolBtn" class="topbar-tool-link" type="button">
+                  Offline Editor
+                </button>
+              </nav>
           </div>
         </div>
 
@@ -433,15 +532,54 @@
 
                 <div id="app-meta">Please wait.</div>
 
-                <div id="app-actions">
-                  <button id="refreshOfflineBtn" class="ghost-btn" type="button">
-                    Refresh Offline Images
-                  </button>
-                </div>
-
                 <div id="offlineStatus"></div>
                 <div id="image-strip"></div>
               </div>
+
+              <section id="offlineEditorPanel" class="offline-editor-panel" hidden>
+                <div class="offline-editor-header">
+                  <div>
+                    <h1>Offline Wikidot Editor</h1>
+                    <p>Write Wikidot/FTML source, then preview the rendered page.</p>
+                  </div>
+
+                  <button id="closeOfflineEditorBtn" class="secondary-btn" type="button">
+                    Close
+                  </button>
+                </div>
+
+                <div class="offline-editor-layout">
+                  <div class="offline-editor-source-pane">
+                    <label for="offlineEditorSource">Source</label>
+
+                    <textarea
+                      id="offlineEditorSource"
+                      class="offline-editor-source"
+                      spellcheck="false"
+                    ></textarea>
+
+                    <div class="offline-editor-actions">
+                      <button id="previewOfflineEditorBtn" class="primary-btn" type="button">
+                        Preview
+                      </button>
+
+                      <button id="clearOfflineEditorBtn" class="secondary-btn" type="button">
+                        Clear
+                      </button>
+                    </div>
+                  </div>
+
+                  <div class="offline-editor-preview-pane">
+                    <div class="offline-editor-preview-header">
+                      Preview
+                    </div>
+
+                    <article id="offlineEditorPreview" class="page-content offline-editor-preview">
+                      <p class="muted">Preview output will appear here.</p>
+                    </article>
+                  </div>
+                </div>
+              </section>
 
               <div class="article-content-wrap">
                 <div id="page-content"></div>

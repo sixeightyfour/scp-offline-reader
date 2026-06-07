@@ -9,6 +9,14 @@ const appMeta = document.getElementById('app-meta');
 const imageStrip = document.getElementById('image-strip');
 const offlineStatus = document.getElementById('offlineStatus');
 
+const offlineEditorToolBtn = document.getElementById('offlineEditorToolBtn');
+const offlineEditorPanel = document.getElementById('offlineEditorPanel');
+const closeOfflineEditorBtn = document.getElementById('closeOfflineEditorBtn');
+const previewOfflineEditorBtn = document.getElementById('previewOfflineEditorBtn');
+const clearOfflineEditorBtn = document.getElementById('clearOfflineEditorBtn');
+const offlineEditorSource = document.getElementById('offlineEditorSource');
+const offlineEditorPreview = document.getElementById('offlineEditorPreview');
+
 const speakBtn = document.getElementById('speakBtn');
 const pauseBtn = document.getElementById('pauseBtn');
 const stopBtn = document.getElementById('stopBtn');
@@ -491,6 +499,138 @@ function downloadBuffer(url) {
   });
 }
 
+function showOfflineEditor() {
+  if (!offlineEditorPanel) return;
+
+  offlineEditorPanel.hidden = false;
+
+  if (pageTitle) {
+    pageTitle.textContent = 'Offline Wikidot Editor';
+  }
+
+  if (appMeta) {
+    appMeta.innerHTML = '<div>Preview Wikidot/FTML source locally.</div>';
+  }
+
+  if (pageContent) {
+    pageContent.hidden = true;
+  }
+
+  if (imageStrip) {
+    imageStrip.hidden = true;
+  }
+
+  if (offlineEditorSource && !offlineEditorSource.value.trim()) {
+    offlineEditorSource.value = [
+      '+ Offline Editor Test',
+      '',
+      '**Item #:** SCP-XXXX',
+      '',
+      '**Object Class:** Safe',
+      '',
+      '[[include component:image-block name=example.jpg|caption=Example image|width=300px]]',
+      '',
+      'This is //italic// and **bold** text.',
+      '',
+      '[[collapsible show="+ Open" hide="- Close"]]',
+      'Hidden text.',
+      '[[/collapsible]]'
+    ].join('\n');
+  }
+
+  if (offlineStatus) {
+    offlineStatus.textContent = '';
+  }
+
+  offlineEditorSource?.focus();
+}
+
+function hideOfflineEditor() {
+  if (!offlineEditorPanel) return;
+
+  offlineEditorPanel.hidden = true;
+
+  if (pageContent) {
+    pageContent.hidden = false;
+  }
+
+  if (imageStrip) {
+    imageStrip.hidden = false;
+  }
+
+  if (currentEntry) {
+    renderArticle(currentEntry, { pushHistory: false }).catch(console.error);
+  }
+}
+
+async function previewOfflineEditorSource() {
+  if (!offlineEditorSource || !offlineEditorPreview) return;
+
+  const source = offlineEditorSource.value || '';
+
+  if (!source.trim()) {
+    offlineEditorPreview.innerHTML = '<p class="muted">Enter Wikidot source to preview.</p>';
+    return;
+  }
+
+  previewOfflineEditorBtn.disabled = true;
+  offlineEditorPreview.innerHTML = '<p class="muted">Rendering preview...</p>';
+
+  try {
+    const result = await window.scpApp.renderFtmlPreview(source);
+    console.log('[offline-editor-preview-result]', result);
+
+    const rawHtml =
+      typeof result === 'string'
+        ? result
+        : result?.html ||
+          result?.output ||
+          result?.rendered ||
+          result?.renderedHtml ||
+          result?.body ||
+          '';
+
+    offlineEditorPreview.innerHTML = sanitizeHtml(rawHtml, {
+      key: 'offline-editor-preview',
+      originalKey: 'offline-editor-preview',
+      title: 'Offline Editor Preview',
+      link: 'offline-editor-preview',
+      url: '',
+      raw_content: rawHtml,
+      raw_source: source,
+      images: []
+    });
+
+    wireLinks(offlineEditorPreview);
+    wireCollapsibles(offlineEditorPreview);
+
+    if (typeof wireFtmlCollapsibles === 'function') {
+      wireFtmlCollapsibles(offlineEditorPreview);
+    }
+  } catch (err) {
+    console.error('FTML preview failed:', err);
+
+    offlineEditorPreview.innerHTML = `
+      <div class="editor-error">
+        <strong>Preview failed.</strong>
+        <pre>${escapeHtml(err.message || String(err))}</pre>
+      </div>
+    `;
+  } finally {
+    previewOfflineEditorBtn.disabled = false;
+  }
+}
+
+function clearOfflineEditor() {
+  if (offlineEditorSource) {
+    offlineEditorSource.value = '';
+  }
+
+  if (offlineEditorPreview) {
+    offlineEditorPreview.innerHTML = '<p class="muted">Preview output will appear here.</p>';
+  }
+}
+
 async function cacheImage(url, item, mode = 'compressed') {
   const existingAbsolutePath = getPreferredLocalAbsolutePath(url, item);
   if (existingAbsolutePath) {
@@ -537,6 +677,76 @@ async function cacheImage(url, item, mode = 'compressed') {
   return record.absPath;
 }
 
+async function injectComponentImageBlocks(root, item) {
+  if (!root || !item) return;
+
+  const blocks = getComponentImageBlocks(item);
+
+  if (!blocks.length) return;
+
+  // Avoid injecting duplicates if FTML did render the image.
+  const existingSrcs = new Set(
+    [...root.querySelectorAll('img[src]')].map((img) =>
+      normalizeUrl(img.getAttribute('src') || '')
+    )
+  );
+
+  const wrapper = document.createElement('div');
+  wrapper.className = 'offline-component-image-blocks';
+
+  for (const block of blocks) {
+    const remoteUrl = normalizeUrl(block.url);
+
+    if (!remoteUrl || existingSrcs.has(remoteUrl)) {
+      continue;
+    }
+
+    const figure = document.createElement('figure');
+    figure.className = 'offline-component-image-block';
+
+    const img = document.createElement('img');
+    img.loading = 'lazy';
+    img.dataset.originalSrc = remoteUrl;
+
+    try {
+      img.src = await resolveCachedSrc(remoteUrl, item);
+    } catch {
+      img.src = remoteUrl;
+    }
+
+    if (block.width) {
+      img.style.maxWidth = block.width;
+    }
+
+    img.addEventListener('click', () => {
+      openLocalOrRemoteImage(img.src, remoteUrl);
+    });
+
+    figure.appendChild(img);
+
+    if (block.caption) {
+      const caption = document.createElement('figcaption');
+      caption.textContent = block.caption;
+      figure.appendChild(caption);
+    }
+
+    wrapper.appendChild(figure);
+  }
+
+  if (!wrapper.childNodes.length) return;
+
+  const firstHeading = root.querySelector('h1, h2, h3');
+  const firstParagraph = root.querySelector('p');
+
+  if (firstHeading && firstHeading.nextSibling) {
+    firstHeading.parentNode.insertBefore(wrapper, firstHeading.nextSibling);
+  } else if (firstParagraph) {
+    firstParagraph.parentNode.insertBefore(wrapper, firstParagraph);
+  } else {
+    root.prepend(wrapper);
+  }
+}
+
 function getEntryImageUrls(item) {
   const urls = new Set();
 
@@ -544,6 +754,14 @@ function getEntryImageUrls(item) {
     for (const src of item.images) {
       const normalized = normalizeUrl(src);
       if (normalized) urls.add(normalized);
+    }
+  }
+
+  for (const block of getComponentImageBlocks(item)) {
+    const normalized = normalizeUrl(block.url);
+
+    if (normalized && !/^data:image\//i.test(normalized)) {
+      urls.add(normalized);
     }
   }
 
@@ -750,6 +968,59 @@ async function loadAllJsonFiles() {
   entries = merged;
   filteredEntries = [...entries];
   rebuildEntryLookup();
+}
+
+function getComponentImageBlocks(item = {}) {
+  const blocks = [];
+  const rawSource = String(item.raw_source || '');
+
+  const pageSlug = String(
+    item.link ||
+    item.originalKey ||
+    item.key ||
+    item.title ||
+    ''
+  )
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\/[^/]+\//i, '')
+    .replace(/^\/+/, '')
+    .replace(/[?#].*$/, '')
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+
+  if (!pageSlug) return blocks;
+
+  const includeRegex = /\[\[include\s+(?::scp-wiki:)?component:image-block\s+([^\]]+)\]\]/gi;
+  let match;
+
+  while ((match = includeRegex.exec(rawSource)) !== null) {
+    const argsText = match[1] || '';
+    const args = {};
+
+    for (const part of argsText.split('|')) {
+      const [rawKey, ...rawValueParts] = part.split('=');
+      const key = String(rawKey || '').trim();
+      const value = rawValueParts.join('=').trim();
+
+      if (key && value) {
+        args[key] = value;
+      }
+    }
+
+    if (!args.name) continue;
+
+    const filename = args.name.trim();
+
+    blocks.push({
+      url: `https://scp-wiki.wdfiles.com/local--files/${pageSlug}/${filename}`,
+      filename,
+      caption: args.caption || '',
+      width: args.width || ''
+    });
+  }
+
+  return blocks;
 }
 
 /*
@@ -1186,6 +1457,42 @@ async function init() {
       syncBtn.addEventListener('click', syncCromDebug);
     }
 
+    if (downloadCompressedBtn) {
+      downloadCompressedBtn.addEventListener('click', () => {
+        cacheCurrentPage();
+      });
+    } 
+
+    if (refreshOfflineBtn) {
+      refreshOfflineBtn.addEventListener('click', () => {
+        cacheAllPagesCompressed();
+      });
+    }
+
+    if (downloadHdBtn) {
+      downloadHdBtn.addEventListener('click', () => {
+        cacheAllPagesCompressed();
+      });
+    }
+
+    if (offlineEditorToolBtn) {
+      offlineEditorToolBtn.addEventListener('click', showOfflineEditor);
+    }
+
+    if (closeOfflineEditorBtn) {
+      closeOfflineEditorBtn.addEventListener('click', hideOfflineEditor);
+    }
+
+    if (previewOfflineEditorBtn) {
+      previewOfflineEditorBtn.addEventListener('click', () => {
+        previewOfflineEditorSource().catch(console.error);
+      });
+    }
+
+    if (clearOfflineEditorBtn) {
+      clearOfflineEditorBtn.addEventListener('click', clearOfflineEditor);
+    }
+
     applyFilters();
 
     if (filteredEntries.length) {
@@ -1260,9 +1567,9 @@ window.addEventListener('popstate', (event) => {
 
 speechSynthesis.onvoiceschanged = () => {};
 
-// ---- Image-cache removal overrides ----
-// This block disables all local image caching and uses remote image URLs directly.
-// It also avoids ipcRenderer/path/fs/crypto/http/https/sharp usage in the renderer.
+// ---- Image-cache runtime IPC overrides ----
+// Image caching is handled by the Electron main process.
+// The renderer never touches fs/path/http/https/crypto/sharp directly.
 
 function getEntryImageUrls(item) {
   const urls = new Set();
@@ -1282,11 +1589,55 @@ function getEntryImageUrls(item) {
       const normalized = normalizeUrl(img.getAttribute('src') || '');
       if (normalized) urls.add(normalized);
     });
+
+    doc.querySelectorAll('source[srcset], img[srcset]').forEach((el) => {
+      const srcset = el.getAttribute('srcset') || '';
+
+      for (const candidate of srcset.split(',')) {
+        const normalized = normalizeUrl(candidate.trim().split(/\s+/)[0]);
+        if (normalized) urls.add(normalized);
+      }
+    });
   } catch {
     // Ignore malformed article HTML.
   }
 
+  const rawSource = String(item?.raw_source || '');
+
+  const absoluteImageRegex =
+    /https?:\/\/[^\s"'<>|\]]+\.(?:jpg|jpeg|png|gif|webp|bmp|svg)(?:\?[^\s"'<>|\]]*)?/gi;
+
+  let match;
+
+  while ((match = absoluteImageRegex.exec(rawSource)) !== null) {
+    const normalized = normalizeUrl(match[0]);
+    if (normalized) urls.add(normalized);
+  }
+
   return [...urls];
+}
+
+async function resolveCachedSrc(src, item) {
+  const normalized = normalizeUrl(src);
+
+  if (!normalized || !item || !window.scpApp?.resolveCachedImage) {
+    return normalized;
+  }
+
+  try {
+    const cached = await window.scpApp.resolveCachedImage(normalized, {
+      originalKey: item.originalKey,
+      title: item.title,
+      link: item.link,
+      url: item.url,
+      key: item.key
+    });
+
+    return cached || normalized;
+  } catch (err) {
+    console.warn('Failed to resolve cached image:', normalized, err);
+    return normalized;
+  }
 }
 
 function sanitizeHtml(rawHtml = '', item = null) {
@@ -1348,6 +1699,7 @@ function sanitizeHtml(rawHtml = '', item = null) {
 
     if (src) {
       img.setAttribute('src', src);
+      img.dataset.originalSrc = src;
     }
 
     img.setAttribute('loading', 'lazy');
@@ -1355,6 +1707,27 @@ function sanitizeHtml(rawHtml = '', item = null) {
 
   const page = doc.querySelector('#page-content');
   return page ? page.innerHTML : doc.body.innerHTML;
+}
+
+async function applyCachedImages(root, item) {
+  if (!root || !item) return;
+
+  const images = [...root.querySelectorAll('img[src]')];
+
+  await Promise.all(
+    images.map(async (img) => {
+      const originalSrc = img.dataset.originalSrc || img.getAttribute('src') || '';
+      const resolved = await resolveCachedSrc(originalSrc, item);
+
+      if (resolved) {
+        img.setAttribute('src', resolved);
+      }
+
+      img.addEventListener('click', () => {
+        openLocalOrRemoteImage(resolved || originalSrc, originalSrc);
+      });
+    })
+  );
 }
 
 function wireLinks(root) {
@@ -1385,6 +1758,7 @@ function wireLinks(root) {
 
       if (href.startsWith('#')) {
         const id = href.slice(1);
+
         if (!id) return;
 
         const target =
@@ -1393,10 +1767,7 @@ function wireLinks(root) {
 
         if (target) {
           e.preventDefault();
-          target.scrollIntoView({
-            behavior: 'smooth',
-            block: 'start'
-          });
+          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
 
         return;
@@ -1410,15 +1781,35 @@ function wireLinks(root) {
   });
 }
 
-function openRemoteImage(src) {
-  const remoteUrl = normalizeUrl(src);
+function openLocalOrRemoteImage(displayedSrc, originalSrc = '') {
+  const src = displayedSrc || originalSrc || '';
+  const remoteUrl = normalizeUrl(originalSrc || displayedSrc || '');
+
+  if (/^file:/i.test(src)) {
+    // Convert only file:// URLs generated by the main process back to a path
+    // for shell.openPath. If this fails, do nothing.
+    try {
+      const url = new URL(src);
+      const filePath = decodeURIComponent(url.pathname);
+
+      if (navigator.platform.toLowerCase().includes('win')) {
+        window.scpApp.openPath(filePath.replace(/^\/([a-zA-Z]:)/, '$1'));
+      } else {
+        window.scpApp.openPath(filePath);
+      }
+    } catch (err) {
+      console.warn('Failed to open cached image:', src, err);
+    }
+
+    return;
+  }
 
   if (/^https?:\/\//i.test(remoteUrl)) {
     window.scpApp.openExternal(remoteUrl);
   }
 }
 
-function renderImages(images) {
+async function renderImages(images) {
   imageStrip.innerHTML = '';
 
   if (!Array.isArray(images) || !images.length) {
@@ -1430,18 +1821,18 @@ function renderImages(images) {
     if (!normalized) continue;
 
     const img = document.createElement('img');
-    img.src = normalized;
+    img.src = await resolveCachedSrc(normalized, currentEntry);
     img.loading = 'lazy';
 
     img.addEventListener('click', () => {
-      openRemoteImage(normalized);
+      openLocalOrRemoteImage(img.src, normalized);
     });
 
     imageStrip.appendChild(img);
   }
 }
 
-function updateOfflineStatus(item) {
+async function updateOfflineStatus(item) {
   if (!item) {
     offlineStatus.textContent = '';
     return;
@@ -1454,14 +1845,23 @@ function updateOfflineStatus(item) {
     return;
   }
 
-  offlineStatus.textContent = `Images loaded remotely: ${urls.length}`;
+  let cached = 0;
+
+  for (const url of urls) {
+    const resolved = await resolveCachedSrc(url, item);
+
+    if (/^file:/i.test(resolved)) {
+      cached += 1;
+    }
+  }
+
+  offlineStatus.textContent = `Offline images available: ${cached}/${urls.length}`;
 }
 
-function renderArticle(item, options = {}) {
+async function renderArticle(item, options = {}) {
   const { pushHistory = true } = options;
 
   currentEntry = item;
-  // stopSpeech();
 
   const tags =
     Array.isArray(item.tags) && item.tags.length
@@ -1473,53 +1873,132 @@ function renderArticle(item, options = {}) {
   pageTitle.textContent = item.title || item.originalKey;
 
   appMeta.innerHTML = `
-    <div>Author: ${escapeHtml(item.creator || 'Unknown')}</div>
-    <!-- 
-    <div>Source file: ${escapeHtml(item.sourceFile || 'Unknown')}</div> 
-    -->
-    <div>URL: ${
-      item.url
-        ? `<a href="${escapeHtml(item.url)}">${escapeHtml(item.url)}</a>`
-        : 'N/A'
+    <div><strong>Author:</strong> ${escapeHtml(item.creator || 'Unknown')}</div>
+    <div><strong>URL:</strong> ${
+      item.url ? `<a href="${escapeHtml(item.url)}">${escapeHtml(item.url)}</a>` : 'N/A'
     }</div>
-    <div>Tags: ${escapeHtml(tags)}</div>
-    <div>Rating: ${escapeHtml(String(item.rating ?? 'N/A'))}</div>
+    <div><strong>Tags:</strong> ${escapeHtml(tags)}</div>
+    <div><strong>Rating:</strong> ${escapeHtml(String(item.rating ?? 'N/A'))}</div>
   `;
 
-  renderImages(item.images);
+  await renderImages(item.images);
 
   pageContent.innerHTML = safeHtml;
+
+  // await injectComponentImageBlocks(pageContent, item);
 
   wireLinks(appMeta);
   wireLinks(pageContent);
   wireCollapsibles(pageContent);
 
-  pageContent.querySelectorAll('img[src]').forEach((img) => {
-    const src = img.getAttribute('src') || '';
+  if (typeof wireFtmlCollapsibles === 'function') {
+    wireFtmlCollapsibles(pageContent);
+  }
 
-    img.addEventListener('click', () => {
-      openRemoteImage(src);
-    });
-  });
-
-  updateOfflineStatus(item);
+  await applyCachedImages(pageContent, item);
+  await updateOfflineStatus(item);
 
   if (pushHistory) {
     updateHistory(item);
   }
 
-  window.scrollTo({
-    top: 0,
-    behavior: 'instant'
-  });
+  window.scrollTo({ top: 0, behavior: 'instant' });
 }
 
 async function cacheCurrentPage() {
-  updateOfflineStatus(currentEntry);
+  if (!currentEntry) {
+    await updateOfflineStatus(currentEntry);
+    return;
+  }
+
+  if (!window.scpApp?.cacheAllImages) {
+    offlineStatus.textContent = 'Image cache API is unavailable.';
+    return;
+  }
+
+  downloadCompressedBtn.disabled = true;
+  downloadHdBtn.disabled = true;
+  refreshOfflineBtn.disabled = true;
+
+  offlineStatus.textContent = 'Caching images. This currently caches all missing images.';
+
+  try {
+    await window.scpApp.cacheAllImages();
+
+    await renderArticle(currentEntry, { pushHistory: false });
+  } catch (err) {
+    console.error('Image cache failed:', err);
+    offlineStatus.textContent = `Image cache failed: ${err.message || err}`;
+  } finally {
+    downloadCompressedBtn.disabled = false;
+    downloadHdBtn.disabled = false;
+    refreshOfflineBtn.disabled = false;
+  }
 }
 
 async function cacheAllPagesCompressed() {
-  updateOfflineStatus(currentEntry);
+  if (!entries.length) {
+    offlineStatus.textContent = 'No entries loaded.';
+    return;
+  }
+
+  if (!window.scpApp?.cacheAllImages) {
+    offlineStatus.textContent = 'Image cache API is unavailable.';
+    return;
+  }
+
+  downloadCompressedBtn.disabled = true;
+  downloadHdBtn.disabled = true;
+  refreshOfflineBtn.disabled = true;
+
+  try {
+    offlineStatus.textContent = 'Preparing image cache...';
+
+    const summary = await window.scpApp.cacheAllImages();
+
+    offlineStatus.textContent =
+      `Image cache complete: ${summary.cached} cached, ` +
+      `${summary.skipped} skipped, ${summary.failed} failed.`;
+
+    if (currentEntry) {
+      await renderArticle(currentEntry, { pushHistory: false });
+    }
+  } catch (err) {
+    console.error('Image cache failed:', err);
+    offlineStatus.textContent = `Image cache failed: ${err.message || err}`;
+  } finally {
+    downloadCompressedBtn.disabled = false;
+    downloadHdBtn.disabled = false;
+    refreshOfflineBtn.disabled = false;
+  }
+}
+
+if (window.scpApp?.onImageCacheProgress) {
+  window.scpApp.onImageCacheProgress((progress) => {
+    if (!offlineStatus) return;
+
+    if (progress.type === 'start') {
+      offlineStatus.textContent = `Caching images: found ${progress.total}.`;
+    }
+
+    if (progress.type === 'progress') {
+      offlineStatus.textContent =
+        `Caching images: ${progress.index}/${progress.total} | ` +
+        `cached ${progress.cached}, skipped ${progress.skipped}, failed ${progress.failed}`;
+    }
+
+    if (progress.type === 'done') {
+      offlineStatus.textContent =
+        `Image cache complete: ${progress.cached} cached, ` +
+        `${progress.skipped} skipped, ${progress.failed} failed.`;
+    }
+
+    if (progress.type === 'cancelled') {
+      offlineStatus.textContent =
+        `Image cache cancelled: ${progress.cached} cached, ` +
+        `${progress.skipped} skipped, ${progress.failed} failed.`;
+    }
+  });
 }
 
 init();
