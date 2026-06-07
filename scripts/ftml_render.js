@@ -1,5 +1,8 @@
 let ftmlModulePromise = null;
 
+const defaultComponents = require('./default_components');
+const { expandIncludes } = require('./include_preprocessor');
+
 function ensureBrowserishGlobals() {
   if (!globalThis.location) {
     globalThis.location = {
@@ -41,27 +44,201 @@ function stripPageWrapper(html) {
     .replace(/<div class="wj-align-center">\s*<\/div>/gi, '');
 }
 
-function normalizeFtmlSource(source) {
+function safePageSlug(value = '') {
+  return String(value)
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\/[^/]+\//i, '')
+    .replace(/^\/+/, '')
+    .replace(/[?#].*$/, '')
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function parsePipeArgs(argsText = '') {
+  const args = {};
+
+  for (const part of String(argsText).split('|')) {
+    const [rawKey, ...rawValueParts] = part.split('=');
+    const key = String(rawKey || '').trim();
+    const value = rawValueParts.join('=').trim();
+
+    if (!key) continue;
+
+    // Wikidot include defaults often appear as duplicate params:
+    // width={$width}|width=300px
+    // align={$align}|align=right
+    //
+    // Keep the first concrete value. If the existing value is unresolved
+    // like {$width}, allow a later concrete default to replace it.
+    const existing = args[key];
+    const existingIsVariable = /^\{\$[^}]+\}$/.test(existing || '');
+    const valueIsVariable = /^\{\$[^}]+\}$/.test(value || '');
+
+    if (
+      existing === undefined ||
+      existing === '' ||
+      existingIsVariable ||
+      (!valueIsVariable && existingIsVariable)
+    ) {
+      args[key] = value;
+    }
+  }
+
+  return args;
+}
+
+function isUnresolvedVariable(value = '') {
+  return /^\{\$[^}]+\}$/.test(String(value).trim());
+}
+
+function cleanIncludeValue(value = '', fallback = '') {
+  const trimmed = String(value || '').trim();
+
+  if (!trimmed || isUnresolvedVariable(trimmed)) {
+    return fallback;
+  }
+
+  return trimmed;
+}
+
+function resolveImageBlockName(name = '', pageSlug = '') {
+  const value = cleanIncludeValue(name);
+
+  if (!value) return '';
+
+  if (/^https?:\/\//i.test(value)) {
+    return value;
+  }
+
+  if (value.startsWith('//')) {
+    return `https:${value}`;
+  }
+
+  if (value.startsWith('/local--files/')) {
+    return `https://scp-wiki.wdfiles.com${value}`;
+  }
+
+  if (value.startsWith('/')) {
+    return `https://scp-wiki.wikidot.com${value}`;
+  }
+
+  return `https://scp-wiki.wdfiles.com/local--files/${pageSlug}/${value}`;
+}
+
+function buildImageBlockReplacement(args, pageSlug) {
+  const name = cleanIncludeValue(args.name);
+  if (!name) return '';
+
+  const imageUrl = resolveImageBlockName(name, pageSlug);
+  if (!imageUrl) return '';
+
+  const caption = cleanIncludeValue(args.caption);
+  const width = cleanIncludeValue(args.width, '300px');
+  const align = cleanIncludeValue(args.align, 'right');
+  const link = cleanIncludeValue(args.link, '#');
+  const altText =
+    cleanIncludeValue(args['alt-text']) ||
+    cleanIncludeValue(args.alt) ||
+    caption ||
+    '';
+
+  const safeAlign = align.replace(/[^a-zA-Z0-9_-]/g, '') || 'right';
+
+  const imageArgs = [];
+
+  imageArgs.push(imageUrl);
+
+  if (altText) {
+    imageArgs.push(`alt="${altText.replace(/"/g, '&quot;')}"`);
+  }
+
+  if (link) {
+    imageArgs.push(`link="${link.replace(/"/g, '&quot;')}"`);
+  }
+
+  return [
+    `[[div class="scp-image-block block-${safeAlign}" style="width:${width};"]]`,
+    `[[image ${imageArgs.join(' ')}]]`,
+    `[[div class="scp-image-caption"]]`,
+    caption,
+    `[[/div]]`,
+    `[[/div]]`
+  ].join('\n');
+}
+
+function expandImageBlockIncludes(source = '', info = {}) {
+  const pageSlug = safePageSlug(
+    info.page ||
+    info.slug ||
+    info.key ||
+    info.link ||
+    info.url ||
+    ''
+  );
+
+  if (!pageSlug) return source;
+
+  let output = String(source || '');
+
+  // Common direct include:
+  // [[include component:image-block name=foo.jpg|caption=Foo]]
+  output = output.replace(
+    /\[\[include\s+(?::scp-wiki:)?component:image-block\s+([^\]]+)\]\]/gi,
+    (_match, argsText) => {
+      const args = parsePipeArgs(argsText);
+      return buildImageBlockReplacement(args, pageSlug);
+    }
+  );
+
+  // Less common direct include of the base component:
+  // [[include :scp-wiki:component:image-block-base name=foo.jpg|...]]
+  output = output.replace(
+    /\[\[include\s+(?::scp-wiki:)?component:image-block-base\s+([^\]]+)\]\]/gi,
+    (_match, argsText) => {
+      const args = parsePipeArgs(argsText);
+      return buildImageBlockReplacement(args, pageSlug);
+    }
+  );
+
+  return output;
+}
+
+function normalizeFtmlSource(source, info = {}) {
   if (typeof source !== 'string') return '';
 
-  return source
-    // Remove Windows/Unix line-continuation markers before FTML parses the source.
-    // Wikidot commonly uses a trailing backslash to continue text on the next line.
-    // If left in place, FTML can split blockquotes/lists/paragraphs incorrectly.
+  return expandImageBlockIncludes(source, info)
     .replace(/\\\r?\n/g, ' ')
-
-    // Remove theme/component includes that are useful on Wikidot but not inside the offline reader.
-    // FTML may render some includes as placeholders/errors unless an includer is configured.
     .replace(/\[\[include\s+:scp-wiki:theme:[^\]]+\]\]/gi, '')
-    .replace(/\[\[include\s+:scp-wiki:component:[^\]]+\]\]/gi, '')
-    .replace(/\[\[include\s+component:[^\]]+\]\]/gi, '');
+    .replace(/\[\[include\s+:scp-wiki:component:(?!image-block\b)(?!image-block-base\b)[^\]]+\]\]/gi, '')
+    .replace(/\[\[include\s+component:(?!image-block\b)(?!image-block-base\b)[^\]]+\]\]/gi, '');
 }
 
 
 async function renderWikidotSourceToHtml(source, info = {}) {
   const ftml = await getFtml();
 
-  const cleanSource = normalizeFtmlSource(source);
+  const pageSlug = safePageSlug(
+    info.page ||
+    info.slug ||
+    info.key ||
+    info.link ||
+    info.url ||
+    ''
+  );
+
+  const includeStore = {
+    ...defaultComponents,
+    ...(info.includeStore || {})
+  };
+
+  const sourceWithIncludes = expandIncludes(source, includeStore, {
+    pageSlug,
+    page: pageSlug,
+    site: info.site || 'scp-wiki'
+  });
+
+  const cleanSource = normalizeFtmlSource(sourceWithIncludes, info);
 
   const pageInfo = {
     page: info.page || info.slug || info.key || 'unknown',

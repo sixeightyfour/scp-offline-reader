@@ -212,3 +212,185 @@
   left: 0;
   transform: none;
 }
+
+.offline-component-image-blocks {
+  margin: 1rem 0;
+}
+
+.offline-component-image-block {
+  margin: 1rem auto;
+  text-align: center;
+}
+
+.offline-component-image-block img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+}
+
+.offline-component-image-block figcaption {
+  margin-top: 0.35rem;
+  font-size: 0.9rem;
+  opacity: 0.75;
+}
+
+.scp-image-block {
+  display: table;
+  max-width: 100%;
+  margin: 0.5rem 0 1rem 0;
+}
+
+.scp-image-block.block-right {
+  float: right;
+  clear: right;
+  margin-left: 1rem;
+}
+
+.scp-image-block.block-left {
+  float: left;
+  clear: left;
+  margin-right: 1rem;
+}
+
+.scp-image-block.block-center,
+.scp-image-block.block-centre {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.scp-image-block img,
+.scp-image-block .image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.scp-image-caption {
+  display: table-caption;
+  caption-side: bottom;
+  padding-top: 0.35rem;
+  text-align: center;
+  font-size: 0.85rem;
+  line-height: 1.3;
+  opacity: 0.85;
+}
+
+.topbar-tools {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 2rem;
+}
+
+.topbar-tool-link {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  padding: 0.35rem 0.65rem;
+  border-radius: 3px;
+  text-decoration: none;
+}
+
+.topbar-tool-link:hover,
+.topbar-tool-link:focus {
+  text-decoration: underline;
+  outline: none;
+}
+
+.offline-editor-panel {
+  margin: 1rem 0;
+}
+
+.offline-editor-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.offline-editor-header h1 {
+  margin: 0;
+}
+
+.offline-editor-header p {
+  margin: 0.25rem 0 0;
+  opacity: 0.75;
+}
+
+.offline-editor-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.9fr) minmax(320px, 1.1fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.offline-editor-source-pane,
+.offline-editor-preview-pane {
+  min-width: 0;
+}
+
+.offline-editor-source-pane label,
+.offline-editor-preview-header {
+  display: block;
+  margin-bottom: 0.4rem;
+  font-weight: 700;
+}
+
+.offline-editor-source {
+  width: 100%;
+  min-height: 65vh;
+  box-sizing: border-box;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 0.95rem;
+  line-height: 1.45;
+  padding: 0.75rem;
+}
+
+.offline-editor-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.offline-editor-preview {
+  min-height: 65vh;
+  padding: 1rem;
+  overflow: auto;
+}
+
+.secondary-btn {
+  opacity: 0.85;
+}
+
+.muted {
+  opacity: 0.65;
+}
+
+.editor-error {
+  border: 1px solid currentColor;
+  padding: 0.75rem;
+}
+
+.editor-error pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 900px) {
+  .offline-editor-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .offline-editor-source {
+    min-height: 40vh;
+  }
+
+  .offline-editor-preview {
+    min-height: 40vh;
+  }
+}

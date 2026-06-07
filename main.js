@@ -1,10 +1,19 @@
 const { app, BrowserWindow, ipcMain, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { renderWikidotSourceToHtml } = require('./scripts/ftml_render');
+const defaultComponents = require('./scripts/default_components');
 
 app.commandLine.appendSwitch('disable-crash-reporter');
 
 const { syncCromScpDataset } = require('./scripts/sync_crom_scp');
+
+const {
+  flattenContentFiles,
+  cacheImagesForEntries,
+  cancelActiveImageCacheJob,
+  resolveCachedImage
+} = require('./scripts/image_cache_service');
 
 let mainWindow = null;
 
@@ -190,13 +199,18 @@ function createWindow() {
 
 ipcMain.on('app:get-paths', (event) => {
   const bundledDataDir = getBundledDataDir();
+  const userDataDir = app.getPath('userData');
 
   event.returnValue = {
     contentDir: bundledDataDir,
-    userDataDir: app.getPath('userData'),
+    userDataDir,
     isPackaged: app.isPackaged,
     resourcesPath: process.resourcesPath,
-    bundledDataDir
+    bundledDataDir,
+    userCacheDir: path.join(userDataDir, 'image_cache'),
+    userManifestPath: path.join(userDataDir, 'image-manifest.json'),
+    bundledCacheDir: path.join(bundledDataDir, 'image_cache'),
+    bundledManifestPath: path.join(bundledDataDir, 'image-manifest.json')
   };
 });
 
@@ -210,6 +224,54 @@ ipcMain.handle('app:open-external', async (_event, url) => {
 
 ipcMain.handle('content:load-all', async () => {
   return loadContentJsonFiles();
+});
+
+ipcMain.handle('images:cache-all', async (event) => {
+  const contentFiles = loadContentJsonFiles();
+  const entries = flattenContentFiles(contentFiles);
+
+  return cacheImagesForEntries({
+    entries,
+    userDataDir: app.getPath('userData'),
+    onProgress: (progress) => {
+      event.sender.send('images:cache-progress', progress);
+    }
+  });
+});
+
+ipcMain.handle('images:cancel-cache', async () => {
+  return cancelActiveImageCacheJob();
+});
+
+ipcMain.handle('images:resolve-cached', async (_event, { url, entry }) => {
+  return resolveCachedImage({
+    url,
+    entry,
+    userDataDir: app.getPath('userData'),
+    bundledDataDir: getBundledDataDir()
+  });
+});
+
+ipcMain.handle('app:open-path', async (_event, filePath) => {
+  if (typeof filePath !== 'string' || !filePath) {
+    throw new Error('Invalid file path');
+  }
+
+  const userDataDir = path.resolve(app.getPath('userData'));
+  const bundledDataDir = path.resolve(getBundledDataDir());
+  const resolved = path.resolve(filePath);
+
+  const allowed =
+    resolved === userDataDir ||
+    resolved.startsWith(userDataDir + path.sep) ||
+    resolved === bundledDataDir ||
+    resolved.startsWith(bundledDataDir + path.sep);
+
+  if (!allowed) {
+    throw new Error('Refusing to open a path outside app data directories');
+  }
+
+  await shell.openPath(resolved);
 });
 
 ipcMain.handle('crom:sync-scp', async () => {
@@ -263,6 +325,45 @@ ipcMain.handle('crom:sync-scp', async () => {
 
     throw err;
   }
+});
+
+ipcMain.handle('tools:render-ftml-preview', async (_event, payload = {}) => {
+  const source = String(payload.source || '');
+
+  if (!source.trim()) {
+    return '';
+  }
+
+  const info = {
+    page: 'offline-editor-preview',
+    slug: 'offline-editor-preview',
+    key: 'offline-editor-preview',
+    title: 'Offline Editor Preview',
+    site: 'scp-wiki',
+    rating: 0,
+    score: 0,
+    tags: [],
+    includeStore: defaultComponents
+  };
+
+  const result = await renderWikidotSourceToHtml(source, info);
+
+  if (typeof result === 'string') {
+    return result;
+  }
+
+  if (result && typeof result === 'object') {
+    return (
+      result.html ||
+      result.output ||
+      result.rendered ||
+      result.renderedHtml ||
+      result.body ||
+      ''
+    );
+  }
+
+  return String(result || '');
 });
 
 app.whenReady().then(() => {
