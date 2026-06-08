@@ -7,10 +7,10 @@ const CROM_ENDPOINT = 'https://api.crom.avn.sh/graphql';
 
 // Change these back to your full range when ready.
 const START = 2;
-const END = 500;
+const END = 9999;
 
-const BATCH_SIZE = 15;
-const REQUEST_DELAY_MS = 500;
+const BATCH_SIZE = 5;
+const REQUEST_DELAY_MS = 1000;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -99,6 +99,110 @@ async function cromApiRequest(query) {
   }
 
   return payload.data;
+}
+
+function isCromBatchFile(filename) {
+  return /^content_crom_scp_\d+_\d+\.json$/i.test(filename);
+}
+
+function batchOutputName(batchStart, batchEnd) {
+  return `content_crom_scp_${batchStart}_${batchEnd}.json`;
+}
+
+function writeJsonAtomic(filePath, data) {
+  const tmpPath = `${filePath}.tmp`;
+
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+
+  fs.writeFileSync(
+    tmpPath,
+    JSON.stringify(sanitizeUnusualLineTerminators(data), null, 2),
+    'utf8'
+  );
+
+  fs.renameSync(tmpPath, filePath);
+}
+
+function combineBatchFiles(outputDir, finalOutputPath) {
+  const files = fs.readdirSync(outputDir)
+    .filter(isCromBatchFile)
+    .sort((a, b) => {
+      const [, aStart] = a.match(/^content_crom_scp_(\d+)_\d+\.json$/i) || [];
+      const [, bStart] = b.match(/^content_crom_scp_(\d+)_\d+\.json$/i) || [];
+
+      return Number(aStart || 0) - Number(bStart || 0);
+    });
+
+  const combined = {};
+  let mergedFileCount = 0;
+  let mergedArticleCount = 0;
+
+  for (const filename of files) {
+    const filePath = path.join(outputDir, filename);
+
+    try {
+      const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        console.warn(`[Crom sync] Skipping invalid batch file: ${filename}`);
+        continue;
+      }
+
+      const articleCount = Object.keys(parsed).length;
+
+      Object.assign(combined, parsed);
+
+      mergedFileCount += 1;
+      mergedArticleCount += articleCount;
+
+      console.log(
+        `[Crom sync] Merged ${filename}: ${articleCount} articles`
+      );
+    } catch (err) {
+      console.warn(
+        `[Crom sync] Failed to read batch file ${filename}; leaving it in place:`,
+        err
+      );
+    }
+  }
+
+  console.log(
+    `[Crom sync] Writing combined dataset: ${path.basename(finalOutputPath)}`
+  );
+
+  writeJsonAtomic(finalOutputPath, combined);
+
+  console.log(
+    `[Crom sync] Combined ${mergedFileCount} batch files into ${Object.keys(combined).length} unique articles`
+  );
+
+  return {
+    files,
+    mergedFileCount,
+    mergedArticleCount,
+    uniqueArticleCount: Object.keys(combined).length
+  };
+}
+
+function removeBatchFiles(outputDir, files) {
+  let removedCount = 0;
+
+  for (const filename of files) {
+    const filePath = path.join(outputDir, filename);
+
+    try {
+      fs.unlinkSync(filePath);
+      removedCount += 1;
+      console.log(`[Crom sync] Removed batch file: ${filename}`);
+    } catch (err) {
+      console.warn(
+        `[Crom sync] Failed to remove batch file ${filename}:`,
+        err
+      );
+    }
+  }
+
+  return removedCount;
 }
 
 function normalizeAttributions(rawAttributions) {
@@ -194,8 +298,11 @@ async function normalizePage(n, page) {
   };
 }
 
-async function fetchScpDataset({ onProgress } = {}) {
-  const output = {};
+async function fetchScpDataset({ outputDir, onProgress } = {}) {
+  if (!outputDir) {
+    throw new Error('fetchScpDataset requires outputDir');
+  }
+
   const numbers = [];
 
   for (let n = START; n <= END; n += 1) {
@@ -207,13 +314,15 @@ async function fetchScpDataset({ onProgress } = {}) {
   console.log(`[Crom sync] Total requested pages: ${numbers.length}`);
 
   const startedAt = Date.now();
+  const totalBatches = Math.ceil(numbers.length / BATCH_SIZE);
+
+  let totalStored = 0;
 
   for (let i = 0; i < numbers.length; i += BATCH_SIZE) {
     const batch = numbers.slice(i, i + BATCH_SIZE);
     const batchStart = batch[0];
     const batchEnd = batch[batch.length - 1];
     const batchNumber = Math.floor(i / BATCH_SIZE) + 1;
-    const totalBatches = Math.ceil(numbers.length / BATCH_SIZE);
 
     console.log(
       `[Crom sync] Batch ${batchNumber}/${totalBatches}: requesting SCP-${String(batchStart).padStart(3, '0')} through SCP-${String(batchEnd).padStart(3, '0')}`
@@ -227,13 +336,14 @@ async function fetchScpDataset({ onProgress } = {}) {
       end: batchEnd,
       done: i,
       total: numbers.length,
-      articleCount: Object.keys(output).length
+      articleCount: totalStored
     });
 
     try {
       const query = buildBatchQuery(batch);
       const data = await cromApiRequest(query);
 
+      const batchOutput = {};
       let addedThisBatch = 0;
       let missingThisBatch = 0;
       let renderFailedThisBatch = 0;
@@ -243,7 +353,7 @@ async function fetchScpDataset({ onProgress } = {}) {
         const page = await normalizePage(n, data?.[alias]);
 
         if (page) {
-          output[scpSlug(n)] = page;
+          batchOutput[scpSlug(n)] = page;
           addedThisBatch += 1;
 
           if (page.content_format !== 'ftml-html') {
@@ -254,8 +364,19 @@ async function fetchScpDataset({ onProgress } = {}) {
         }
       }
 
+      const outputName = batchOutputName(batchStart, batchEnd);
+      const outputPath = path.join(outputDir, outputName);
+
       console.log(
-        `[Crom sync] Batch ${batchNumber}/${totalBatches} complete: added ${addedThisBatch}, missing ${missingThisBatch}, render failed ${renderFailedThisBatch}, total stored ${Object.keys(output).length}`
+        `[Crom sync] Batch ${batchNumber}/${totalBatches}: writing ${addedThisBatch} articles to ${outputName}`
+      );
+
+      writeJsonAtomic(outputPath, batchOutput);
+
+      totalStored += addedThisBatch;
+
+      console.log(
+        `[Crom sync] Batch ${batchNumber}/${totalBatches} complete: added ${addedThisBatch}, missing ${missingThisBatch}, render failed ${renderFailedThisBatch}, total stored ${totalStored}`
       );
 
       onProgress?.({
@@ -269,7 +390,8 @@ async function fetchScpDataset({ onProgress } = {}) {
         addedThisBatch,
         missingThisBatch,
         renderFailedThisBatch,
-        articleCount: Object.keys(output).length
+        articleCount: totalStored,
+        outputPath
       });
     } catch (err) {
       console.error(
@@ -285,7 +407,7 @@ async function fetchScpDataset({ onProgress } = {}) {
         end: batchEnd,
         done: i,
         total: numbers.length,
-        articleCount: Object.keys(output).length,
+        articleCount: totalStored,
         error: err.message || String(err)
       });
 
@@ -298,38 +420,65 @@ async function fetchScpDataset({ onProgress } = {}) {
   const elapsedSeconds = Math.round((Date.now() - startedAt) / 1000);
 
   console.log(
-    `[Crom sync] Finished. Stored ${Object.keys(output).length} articles in ${elapsedSeconds}s.`
+    `[Crom sync] Finished. Stored ${totalStored} articles in ${elapsedSeconds}s.`
   );
 
-  return output;
+  return {
+    articleCount: totalStored,
+    generatedAt: new Date().toISOString()
+  };
 }
 
 async function syncCromScpDataset(outputPath, { onProgress } = {}) {
-  console.log(`[Crom sync] Output file: ${outputPath}`);
+  const outputDir = path.dirname(outputPath);
 
-  const dataset = await fetchScpDataset({ onProgress });
-  const sanitizedDataset = sanitizeUnusualLineTerminators(dataset);
+  console.log(`[Crom sync] Output directory: ${outputDir}`);
 
-  console.log(`[Crom sync] Writing ${Object.keys(sanitizedDataset).length} articles to disk...`);
+  const oldSingleFile = outputPath;
 
-  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+  if (fs.existsSync(oldSingleFile)) {
+    console.log(`[Crom sync] Removing old single-file dataset: ${oldSingleFile}`);
+    fs.unlinkSync(oldSingleFile);
+  }
 
-  fs.writeFileSync(
-    outputPath,
-    JSON.stringify(sanitizedDataset, null, 2),
-    'utf8'
+  const result = await fetchScpDataset({
+    outputDir,
+    onProgress
+  });
+
+  console.log('[Crom sync] Combining batch files...');
+
+  onProgress?.({
+    phase: 'combining',
+    articleCount: result.articleCount
+  });
+
+  const combineResult = combineBatchFiles(outputDir, outputPath);
+
+  console.log('[Crom sync] Removing temporary batch files...');
+
+  onProgress?.({
+    phase: 'cleaning',
+    articleCount: combineResult.uniqueArticleCount
+  });
+
+  const removedBatchFileCount = removeBatchFiles(
+    outputDir,
+    combineResult.files
   );
 
-  const result = {
+  const finalResult = {
     outputPath,
-    articleCount: Object.keys(sanitizedDataset).length,
-    generatedAt: new Date().toISOString()
+    articleCount: combineResult.uniqueArticleCount,
+    generatedAt: result.generatedAt,
+    mergedBatchFileCount: combineResult.mergedFileCount,
+    removedBatchFileCount
   };
 
-  console.log('[Crom sync] Write complete.');
-  console.log('[Crom sync] Result:', result);
+  console.log('[Crom sync] Sync complete.');
+  console.log('[Crom sync] Result:', finalResult);
 
-  return result;
+  return finalResult;
 }
 
 module.exports = {

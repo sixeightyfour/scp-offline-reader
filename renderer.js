@@ -45,6 +45,65 @@ const USER_MANIFEST_PATH = APP_PATHS.userManifestPath;
 const BUNDLED_CACHE_DIR = APP_PATHS.bundledCacheDir;
 const BUNDLED_MANIFEST_PATH = APP_PATHS.bundledManifestPath;
 
+const THEME_REGISTRY = {
+  'scp-wiki:theme:black-highlighter-theme': {
+    id: 'black-highlighter',
+    name: 'Black Highlighter',
+    css: "themes/black-highlighter/css/black-highlighter.css"
+  },
+
+  'theme:black-highlighter-theme': {
+    id: 'black-highlighter',
+    name: 'Black Highlighter',
+    css: "themes/black-highlighter/css/black-highlighter.css"
+  },
+
+  'scp-wiki:theme:sigma-9': {
+    id: 'sigma-9',
+    name: 'Sigma-9',
+    css: 'themes/sigma-main/theme.css'
+  }
+};
+
+const DEFAULT_THEME = {
+  id: 'default',
+  name: 'Default',
+  css: 'sigma-main/sigma.css'
+};
+
+function normalizeThemeInclude(includeTarget = '') {
+  return String(includeTarget)
+    .trim()
+    .replace(/^:/, '')
+    .toLowerCase();
+}
+
+function resolveTheme(includeTarget = '') {
+  const key = normalizeThemeInclude(includeTarget);
+  return THEME_REGISTRY[key] || DEFAULT_THEME;
+}
+
+function applyArticleTheme(theme) {
+  const link = document.getElementById('article-theme-css');
+
+  if (!link) {
+    console.warn('[theme] Missing #article-theme-css link element');
+    return;
+  }
+
+  if (!theme || !theme.css) {
+    link.removeAttribute('href');
+    console.log('[theme] Using default app theme');
+    return;
+  }
+
+  const themeUrl = new URL(theme.css, window.location.href).href;
+
+  link.href = themeUrl;
+
+  console.log('[theme] Applied stylesheet:', themeUrl);
+}
+
 //ensureDir(USER_DATA_DIR);
 //ensureDir(USER_CACHE_DIR);
 
@@ -197,6 +256,37 @@ function safeSlug(value = '') {
     .replace(/[^a-z0-9._-]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 120) || 'item';
+}
+
+function detectThemeInclude(source = '') {
+  const raw = String(source || '');
+
+  const includeRegex = /\[\[include\s+([^\]\s]+)(?:\s+[^\]]*)?\]\]/gi;
+
+  let match;
+  while ((match = includeRegex.exec(raw)) !== null) {
+    const includeTarget = String(match[1] || '')
+      .trim()
+      .replace(/^:/, '')
+      .toLowerCase();
+
+    if (includeTarget.includes('theme:')) {
+      return includeTarget;
+    }
+  }
+
+  return null;
+}
+
+function getThemeForItem(item = {}) {
+  const source = item.raw_source || item.raw_content || '';
+  const includeTarget = detectThemeInclude(source);
+
+  if (!includeTarget) {
+    return resolveTheme('');
+  }
+
+  return resolveTheme(includeTarget);
 }
 
 function extractPathname(value = '') {
@@ -1858,10 +1948,41 @@ async function updateOfflineStatus(item) {
   offlineStatus.textContent = `Offline images available: ${cached}/${urls.length}`;
 }
 
+async function getRenderedArticleHtml(item = {}) {
+  // Prefer already-rendered HTML if present.
+  if (item.raw_content && item.raw_content.trim()) {
+    return item.raw_content;
+  }
+
+  // Fall back to raw Wikidot source from Crom.
+  const source = item.raw_source || '';
+
+  if (!source.trim()) {
+    return '<p><em>No article content available.</em></p>';
+  }
+
+  // Use the existing FTML render bridge.
+  if (!window.scpApp || typeof window.scpApp.renderFtml !== 'function') {
+    console.error('[render] window.scpApp.renderFtml is unavailable');
+    return '<p><em>Renderer unavailable.</em></p>';
+  }
+
+  try {
+    return await window.scpApp.renderFtml(source);
+  } catch (err) {
+    console.error('[render] Failed to render FTML source:', err);
+    return `<pre>${escapeHtml(source)}</pre>`;
+  }
+}
+
 async function renderArticle(item, options = {}) {
   const { pushHistory = true } = options;
 
   currentEntry = item;
+
+  const activeTheme = getThemeForItem(item);
+  console.log('[theme]', activeTheme);
+  applyArticleTheme(activeTheme);
 
   const tags =
     Array.isArray(item.tags) && item.tags.length
