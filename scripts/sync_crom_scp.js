@@ -6,8 +6,8 @@ const { renderWikidotSourceToHtml } = require('./ftml_render');
 const CROM_ENDPOINT = 'https://api.crom.avn.sh/graphql';
 
 // Change these back to your full range when ready.
-const START = 2;
-const END = 9999;
+const START = 4371;
+const END = 4383;
 
 const BATCH_SIZE = 5;
 const REQUEST_DELAY_MS = 1000;

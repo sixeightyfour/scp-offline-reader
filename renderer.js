@@ -91,6 +91,9 @@ function applyArticleTheme(theme) {
     return;
   }
 
+  document.body.classList.remove('article-theme-active');
+  document.body.removeAttribute('data-article-theme');
+
   if (!theme || !theme.css) {
     link.removeAttribute('href');
     console.log('[theme] Using default app theme');
@@ -100,6 +103,9 @@ function applyArticleTheme(theme) {
   const themeUrl = new URL(theme.css, window.location.href).href;
 
   link.href = themeUrl;
+
+  document.body.classList.add('article-theme-active');
+  document.body.dataset.articleTheme = theme.id;
 
   console.log('[theme] Applied stylesheet:', themeUrl);
 }
